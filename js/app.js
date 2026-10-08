@@ -118,7 +118,7 @@ function wireShell() {
   };
   renderBell(); paintBanner();
 }
-export const nlink = n => n.incident_id ? `#/incidencia/${n.incident_id}` : n.plan_id ? `#/preventivo/${n.plan_id}` : '#/';
+export const nlink = n => n.incident_id ? `#/incidencia/${n.incident_id}` : n.plan_id || n.project_id ? '#/preventivo' : '#/';
 function renderBell() {
   const c = document.getElementById('bell-count'), panel = document.getElementById('alertpanel'); if (!c) return;
   c.hidden = !S.notifs.length; c.textContent = S.notifs.length;

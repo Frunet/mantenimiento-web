@@ -51,61 +51,32 @@ async function viewEquipoForm(id) {
       act(async () => { await rpc('save_equipment', { p: o }); done('Equipo guardado.'); }, f.querySelector('button.btn-primary'), '#/equipos'); }; } };
 }
 
-// ============================================================ PREVENTIVO
-const PSTAT = [['ACTIVO', 'Activo'], ['PAUSADO', 'Pausado'], ['FINALIZADO', 'Finalizado']];
-async function viewPreventivo(q) {
-  need(staff()); const flt = q.estado || 'ACTIVO';
-  const [rows, sum] = await Promise.all([rpc('list_plans', { p_status: flt }), rpc('preventive_summary')]);
-  return shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo plan</a></div>
-  <div class="tiles tiles-sm"><div class="tile t-CRITICA"><b>${sum.overdue}</b><span>Revisiones vencidas</span></div><div class="tile t-ALTA"><b>${sum.soon}</b><span>Próximas (3 días)</span></div></div>
-  <div class="tabs">${PSTAT.map(([k, n]) => `<a class="${flt === k ? 'on' : ''}" href="#/preventivo?estado=${k}">${n.toUpperCase()}</a>`).join('')}<a class="${flt === 'TODOS' ? 'on' : ''}" href="#/preventivo?estado=TODOS">TODOS</a></div>
-  ${rows.map(p => { const act = p.status === 'ACTIVO', cls = act && p.days_left < 0 ? 'urgb-CRITICA' : act && p.days_left <= 3 ? 'urgb-ALTA' : 'urgb-BAJA';
-    const badge = !act ? `<span class="pill">${esc(p.status.toLowerCase())}</span>` : p.days_left < 0 ? `<span class="pill urg-CRITICA">Vencida hace ${-p.days_left} d</span>` : p.days_left === 0 ? '<span class="pill urg-ALTA">Vence hoy</span>' : `<span class="pill ${p.days_left <= 3 ? 'urg-ALTA' : 'urg-BAJA'}">En ${p.days_left} d</span>`;
-    return `<a class="card inc ${cls}" href="#/preventivo/${p.id}"><div class="row between"><strong>${esc(p.title)}</strong>${badge}</div><div class="meta"><span>⚙️ ${esc(p.equip_name)}</span><span>🏭 ${esc(p.area_name || '—')}</span>
-    <span>🔁 cada ${p.frequency_days} días</span><span>📅 próxima: ${fmtD(p.next_due)}</span><span>👷 ${esc(p.tech_name || 'Cualquier técnico')}</span><span>✔ última: ${p.last_done ? fmtD(p.last_done) : 'nunca'}</span></div></a>`; }).join('') || '<div class="card center muted">No hay planes en esta lista.</div>'}`);
+// ============================================================ PREVENTIVO (tabla de proyectos)
+// Cuatro columnas de texto libre: Proyecto · Estado · Fecha prevista · Observaciones.
+async function viewPreventivo() {
+  need(staff()); const rows = await rpc('list_projects');
+  const badge = r => r.days_left == null ? '' : r.days_left < 0 ? `<br><span class="pill urg-CRITICA">Vencido hace ${-r.days_left} d</span>` : r.days_left <= 3 ? `<br><span class="pill urg-ALTA">${r.days_left === 0 ? 'Vence hoy' : 'Vence en ' + r.days_left + ' d'}</span>` : '';
+  return shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo proyecto</a></div>
+  <p class="muted">Pulsa una fila para editarla o eliminarla.</p>
+  <div class="tablewrap"><table class="table tprev"><thead><tr><th>Proyecto</th><th>Estado</th><th>Fecha prevista</th><th>Observaciones</th></tr></thead><tbody>
+  ${rows.map(r => `<tr class="clickable" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong></td><td>${esc(r.status)}</td><td>${esc(r.expected_date || '')}${badge(r)}</td><td class="obs">${esc(r.observations || '')}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="center muted">Todavía no hay proyectos. Pulsa «Nuevo proyecto».</td></tr>'}</tbody></table></div>`);
 }
-async function viewPlan(id) {
-  need(staff()); const d = await rpc('plan_detail', { p_id: Number(id) }), p = d.plan;
-  return shell(`${back('#/preventivo', 'Preventivo')}<div class="row between wrap"><h1>🗓️ ${esc(p.title)}</h1><span class="row gap"><a class="btn" href="#/preventivo/${p.id}/editar">✏️ Editar</a>
-  ${p.status === 'ACTIVO' ? `<a class="btn btn-ok" href="#/preventivo/${p.id}/ejecutar">✔ Realizar revisión</a>` : ''}</span></div>
-  <section class="card"><dl class="info"><dt>Equipo</dt><dd><a href="#/equipo/${p.equipment_id}">${esc(p.equip_name)}</a> (${esc(p.equip_code)})</dd><dt>Área</dt><dd>${esc(p.area_name || '—')}</dd><dt>Frecuencia</dt><dd>cada ${p.frequency_days} días</dd>
-  <dt>Próxima revisión</dt><dd><strong>${fmtD(p.next_due)}</strong> ${p.status === 'ACTIVO' ? (p.days_left < 0 ? `<span class="pill urg-CRITICA">vencida hace ${-p.days_left} d</span>` : p.days_left <= 3 ? `<span class="pill urg-ALTA">en ${p.days_left} d</span>` : '') : ''}</dd>
-  <dt>Técnico</dt><dd>${esc(p.tech_name || 'Cualquiera')}</dd><dt>Estado</dt><dd>${esc(p.status.toLowerCase())}</dd></dl>
-  <div class="row gap" style="margin-top:.7rem">${PSTAT.filter(([k]) => k !== p.status).map(([k, n]) => `<button class="btn btn-sm" data-pst="${k}">${{ ACTIVO: 'Activar', PAUSADO: 'Pausar', FINALIZADO: 'Finalizar' }[k]}</button>`).join('')}</div></section>
-  <section class="card"><h2>Checklist</h2><ul class="checklist">${d.items.map(i => `<li>☐ ${esc(i.text)}</li>`).join('') || '<li class="muted">Sin tareas definidas.</li>'}</ul></section>
-  <section class="card"><h2>Historial de revisiones</h2>${d.runs.map(r => `<div class="run"><div class="row between wrap"><strong>${fmtDT(r.performed_at)}</strong><span class="pill ${r.status === 'COMPLETADA' ? 'st-RESUELTA' : r.status === 'PARCIAL' ? 'st-PENDIENTE_MATERIAL' : 'st-PENDIENTE'}">${esc(r.status.replace('_', ' ').toLowerCase())}</span></div>
-  <small class="muted">${esc(r.tech_name || '—')}${r.minutes_spent != null ? ' · ' + fmtMin(r.minutes_spent) : ''}</small>${r.notes ? `<p>${esc(r.notes)}</p>` : ''}
-  <ul class="checklist">${r.items.map(i => `<li>${i.done ? '☑' : '☐'} ${esc(i.text)}${i.notes ? ` <small class="muted">— ${esc(i.notes)}</small>` : ''}</li>`).join('')}</ul></div>`).join('') || '<p class="muted">Todavía no se ha realizado ninguna revisión.</p>'}</section>`);
-}
-function wirePlan(id) { document.querySelectorAll('[data-pst]').forEach(b => b.onclick = () => act(() => rpc('set_plan_status', { p_id: Number(id), p_status: b.dataset.pst }), b)); }
-async function viewPlanForm(id) {
-  need(staff()); const d = id ? await rpc('plan_detail', { p_id: Number(id) }) : null, p = d ? d.plan : {}; const R = S.ref; const eq = await rpc('list_equipment');
-  const today = new Date().toISOString().slice(0, 10);
-  return { html: shell(`${back('#/preventivo', 'Preventivo')}<h1>${id ? 'Editar plan' : 'Nuevo plan preventivo'}</h1><form id="fplan" class="card stack"><div class="grid-form">
-  <label>Título de la revisión<input name="title" value="${esc(p.title || '')}" placeholder="Engrasado y revisión de correas" required></label>
-  <label>Equipo<select name="equipment_id" required><option value="">—</option>${eq.filter(e => e.active).map(e => `<option value="${e.id}" ${p.equipment_id === e.id ? 'selected' : ''}>${esc(e.code)} · ${esc(e.name)}</option>`).join('')}</select></label>
-  <label>Frecuencia (días)<input type="number" name="frequency_days" min="1" max="3650" list="freqs" value="${p.frequency_days || 30}" required></label>
-  <datalist id="freqs"><option value="7"><option value="15"><option value="30"><option value="90"><option value="180"><option value="365"></datalist>
-  <label>Próxima revisión<input type="date" name="next_due" value="${esc(p.next_due || today)}" required></label>
-  <label>Técnico responsable<select name="technician_id"><option value="">Cualquiera</option>${R.techs.map(t => `<option value="${t.id}" ${p.technician_id === t.id ? 'selected' : ''}>${esc(t.full_name)}</option>`).join('')}</select></label>
-  <label>Estado<select name="status">${PSTAT.map(([k, n]) => `<option value="${k}" ${p.status === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
-  <label>Checklist (una tarea por línea)<textarea name="checklist" rows="7" placeholder="Comprobar tensión de la correa&#10;Engrasar rodamientos&#10;Limpiar sensores">${esc(d ? d.items.map(i => i.text).join('\n') : '')}</textarea></label><button class="btn btn-primary">Guardar plan</button></form>`),
-    after: () => { const f = document.getElementById('fplan'); f.onsubmit = ev => { ev.preventDefault(); const o = form2obj(f); o.checklist = o.checklist.split('\n').map(x => x.trim()).filter(Boolean); if (id) o.id = Number(id);
-      guard(async () => { const nid = await rpc('save_plan', { p: o }); done('Plan guardado.'); location.hash = '#/preventivo/' + nid; }, f.querySelector('button')); }; } };
-}
-async function viewPlanRun(id) {
-  need(staff()); const d = await rpc('plan_detail', { p_id: Number(id) }), p = d.plan;
-  if (p.status !== 'ACTIVO') throw new Error('Solo se pueden ejecutar planes activos.');
-  const now = new Date(), pad = n => String(n).padStart(2, '0'), loc = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  return { html: shell(`${back('#/preventivo/' + id, esc(p.title))}<h1>Revisión: ${esc(p.title)}</h1><p class="muted">⚙️ ${esc(p.equip_name)}</p><form id="frun" class="stack">
-  <div class="card stack">${d.items.map(i => `<div class="chk"><label class="check big-check"><input type="checkbox" name="done_${i.id}"> ${esc(i.text)}</label><input name="note_${i.id}" placeholder="Observación (opcional)"></div>`).join('') || '<p class="muted">Este plan no tiene checklist; registra la revisión con las observaciones.</p>'}</div>
-  <div class="card stack"><div class="grid-form"><label>Fecha y hora<input type="datetime-local" name="performed_at" value="${loc}"></label><label>Tiempo empleado (min)<input type="number" name="minutes" min="0"></label></div>
-  <label>Observaciones<textarea name="notes" rows="3"></textarea></label><label class="check"><input type="checkbox" name="not_done"> No se ha podido realizar (el plan seguirá pendiente)</label></div>
-  <button class="btn btn-ok" style="min-height:56px">Guardar revisión</button></form>`),
-    after: () => { const f = document.getElementById('frun'); f.onsubmit = ev => { ev.preventDefault(); const dn = {}, nt = {};
-      d.items.forEach(i => { dn[i.id] = f['done_' + i.id].checked; nt[i.id] = f['note_' + i.id].value; });
-      guard(async () => { const st = await rpc('run_plan', { p_id: Number(id), p_performed: f.performed_at.value ? new Date(f.performed_at.value).toISOString() : null, p_minutes: num(f.minutes.value), p_notes: f.notes.value, p_done: dn, p_item_notes: nt, p_not_done: f.not_done.checked });
-        done({ COMPLETADA: 'Revisión completada. Próxima revisión programada.', PARCIAL: 'Revisión registrada como parcial.', NO_REALIZADA: 'Registrada como no realizada; sigue pendiente.' }[st]); location.hash = '#/preventivo/' + id; }, f.querySelector('button')); }; } };
+async function viewProyectoForm(id) {
+  need(staff()); const rows = await rpc('list_projects'), r = id ? rows.find(x => String(x.id) === String(id)) : {}; if (id && !r) throw new Error('Registro no encontrado.');
+  return { html: shell(`${back('#/preventivo', 'Preventivo')}<h1>${id ? 'Editar proyecto' : 'Nuevo proyecto'}</h1><form id="fproj" class="card stack">
+  <label>Proyecto<input name="project" value="${esc(r.project || '')}" required maxlength="200" placeholder="Cortadora-Empujador Rodaja"></label>
+  <label>Estado<input name="status" value="${esc(r.status || '')}" required maxlength="60" list="estados" placeholder="Iniciado"></label>
+  <datalist id="estados"><option>Pendiente</option><option>Iniciado</option><option>En curso</option><option>Pendiente de material</option><option>Finalizado</option></datalist>
+  <label>Fecha prevista<input name="expected_date" value="${esc(r.expected_date || '')}" maxlength="100" placeholder="Final Octubre"></label>
+  <small class="muted" style="margin-top:-.4rem">Puede ser una fecha («15/11/2026») o un texto aproximado («Final Octubre»). Si se reconoce una fecha o un mes, se avisa cuando se acerca o vence.</small>
+  <label>Observaciones<textarea name="observations" rows="5" maxlength="4000" placeholder="Solicitado Nylon y cuchillas para su posterior cambio.">${esc(r.observations || '')}</textarea></label>
+  <div class="row gap wrap"><button class="btn btn-primary">Guardar</button><a class="btn" href="#/preventivo">Cancelar</a>${id ? '<button class="btn btn-danger" type="button" id="del" style="margin-left:auto">🗑 Eliminar</button>' : ''}</div></form>`),
+    after: () => { const f = document.getElementById('fproj');
+      f.onsubmit = ev => { ev.preventDefault(); const o = form2obj(f); if (id) o.id = Number(id);
+        act(async () => { await rpc('save_project', { p: o }); done(id ? 'Proyecto guardado.' : 'Proyecto creado.'); }, f.querySelector('button.btn-primary'), '#/preventivo'); };
+      const del = document.getElementById('del');
+      if (del) del.onclick = () => { if (confirm('¿Eliminar este proyecto? No se puede deshacer.')) act(async () => { await rpc('delete_project', { p_id: Number(id) }); done('Proyecto eliminado.'); }, del, '#/preventivo'); }; } };
 }
 
 // ============================================================ ESTADÍSTICAS
@@ -144,12 +115,14 @@ export async function exportIncidents(fmt, rows) {
 }
 const REP = { tecnico: ['Por técnico', ['Técnico', 'Incidencias', 'Horas', 'Coste material (€)']], equipo: ['Por equipo', ['Equipo', 'Incidencias', 'Horas', 'Coste material (€)']], area: ['Por área', ['Área', 'Incidencias', 'Horas', 'Coste material (€)']],
   categoria: ['Por categoría', ['Categoría', 'Incidencias', 'Horas', 'Coste material (€)']], materiales: ['Materiales', ['Material', 'Unidad', 'Cantidad', 'Coste (€)', 'Incidencias']],
-  preventivo: ['Preventivo', ['Equipo', 'Plan', 'Revisiones', 'Completadas', 'Parciales', 'No realizadas', 'Horas', 'Cumplimiento %']] };
+  preventivo: ['Preventivo (proyectos)', ['Estado', 'Proyectos', 'Con fecha vencida']] };
 async function viewReport(q) {
   need(isAdmin()); const r = await rpc('report', { p_from: q.date_from || null, p_to: q.date_to || null }); window.__report = r;
+  const pj = await rpc('list_projects'), by = {}; pj.forEach(x => { const k = x.status.trim(); by[k] = by[k] || [k, 0, 0]; by[k][1]++; if (x.days_left != null && x.days_left < 0) by[k][2]++; });
+  r.preventivo = Object.values(by).sort((p, q) => q[1] - p[1]);
   return { html: shell(`<div class="row between wrap"><h1>Informes</h1><form id="frp" class="row gap wrap"><input type="date" name="date_from" value="${esc(q.date_from || '')}"><input type="date" name="date_to" value="${esc(q.date_to || '')}">
   <button class="btn">Filtrar</button><button class="btn" type="button" id="rp-xlsx">⬇ Excel</button><button class="btn" type="button" onclick="print()">🖨 Imprimir</button></form></div>
-  <p class="muted">Rango según fecha de creación de la incidencia (preventivo: fecha de la revisión). El coste suma el material con coste unitario; si no lo hay, el coste manual de la actuación.</p>
+  <p class="muted">Rango según fecha de creación de la incidencia (preventivo: estado actual de los proyectos). El coste suma el material con coste unitario; si no lo hay, el coste manual de la actuación.</p>
   ${Object.entries(REP).map(([k, [t, h]]) => `<section class="card"><h2>${t}</h2><div class="tablewrap"><table class="table"><thead><tr>${h.map(x => `<th>${x}</th>`).join('')}</tr></thead><tbody>
   ${r[k].map(row => `<tr>${row.map(c => `<td>${esc(c ?? 0)}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${h.length}" class="muted center">Sin datos.</td></tr>`}</tbody></table></div></section>`).join('')}`),
     after: () => { document.getElementById('frp').onsubmit = ev => { ev.preventDefault(); const p = new URLSearchParams(); new FormData(ev.target).forEach((v, k) => { if (v) p.set(k, v); }); location.hash = '#/informes' + (p.toString() ? '?' + p : ''); };
@@ -221,7 +194,7 @@ export async function dispatch(parts, q) {
   try {
     if (a === 'equipos') return wrap(await viewEquipos());
     if (a === 'equipo') { if (b === 'nuevo') return await viewEquipoForm(null); if (c === 'editar') return await viewEquipoForm(b); return wrap(await viewEquipo(b)); }
-    if (a === 'preventivo') { if (!b) return wrap(await viewPreventivo(q)); if (b === 'nuevo') return await viewPlanForm(null); if (c === 'editar') return await viewPlanForm(b); if (c === 'ejecutar') return await viewPlanRun(b); return { html: await viewPlan(b), after: () => wirePlan(b) }; }
+    if (a === 'preventivo') { if (!b) return wrap(await viewPreventivo()); if (b === 'nuevo') return await viewProyectoForm(null); if (c === 'editar') return await viewProyectoForm(b); return wrap(await viewPreventivo()); }
     if (a === 'estadisticas') return await viewStats(q);
     if (a === 'informes') return await viewReport(q);
     if (a === 'admin') { need(isAdmin());
