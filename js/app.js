@@ -1,44 +1,45 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js';
+import { dispatch, startExtras, exportIncidents } from './extra.js';
 
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
-const S = { me: null, ref: null, channel: null, poll: null, notifs: [], seenTop: null };
+export const S = { me: null, ref: null, channel: null, poll: null, notifs: [], seenTop: null };
 
 // ---------------------------------------------------------------- utilidades
-const URG = { CRITICA: ['🔴', 'CRÍTICA', 'Afecta a producción, seguridad o puede provocar daños importantes.'],
+export const URG = { CRITICA: ['🔴', 'CRÍTICA', 'Afecta a producción, seguridad o puede provocar daños importantes.'],
   ALTA: ['🟠', 'ALTA', 'Afecta considerablemente al funcionamiento y necesita atención rápida.'],
   MEDIA: ['🟡', 'MEDIA', 'Afecta al funcionamiento pero se puede continuar trabajando.'],
   BAJA: ['🟢', 'BAJA', 'Problema menor que puede solucionarse cuando haya disponibilidad.'] };
-const STATUS = { PENDIENTE: 'Pendiente', ASIGNADA: 'Asignada', EN_PROCESO: 'En proceso', PENDIENTE_MATERIAL: 'Pendiente de material',
+export const STATUS = { PENDIENTE: 'Pendiente', ASIGNADA: 'Asignada', EN_PROCESO: 'En proceso', PENDIENTE_MATERIAL: 'Pendiente de material',
   RESUELTA: 'Resuelta', CERRADA: 'Cerrada', CANCELADA: 'Cancelada' };
-const OPEN = ['PENDIENTE', 'ASIGNADA', 'EN_PROCESO', 'PENDIENTE_MATERIAL'];
+export const OPEN = ['PENDIENTE', 'ASIGNADA', 'EN_PROCESO', 'PENDIENTE_MATERIAL'];
 const TZ = 'Europe/Madrid';
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const num = v => (v === '' || v == null ? null : Number(v));
-const fmtDT = v => v ? new Date(v).toLocaleString('es-ES', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '') : '—';
-const fmtMin = m => { if (m == null) return '—'; const h = Math.floor(m / 60), mm = m % 60; return h ? `${h} h ${String(mm).padStart(2, '0')} min` : `${mm} min`; };
-const since = (a, b) => { if (!a) return '—'; const m = Math.max(0, Math.floor(((b ? new Date(b) : new Date()) - new Date(a)) / 60000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const num = v => (v === '' || v == null ? null : Number(v));
+export const fmtDT = v => v ? new Date(v).toLocaleString('es-ES', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '') : '—';
+export const fmtMin = m => { if (m == null) return '—'; const h = Math.floor(m / 60), mm = m % 60; return h ? `${h} h ${String(mm).padStart(2, '0')} min` : `${mm} min`; };
+export const since = (a, b) => { if (!a) return '—'; const m = Math.max(0, Math.floor(((b ? new Date(b) : new Date()) - new Date(a)) / 60000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
   return d ? `${d} d ${h} h` : h ? `${h} h ${m % 60} min` : `${m} min`; };
-const toLocalInput = v => { if (!v) return ''; const d = new Date(v), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
-const fromLocalInput = v => v ? new Date(v).toISOString() : null;
-const urgPill = u => `<span class="pill urg-${u}">${URG[u][0]} ${URG[u][1]}</span>`;
-const stPill = s => `<span class="pill st-${s}">${STATUS[s]}</span>`;
+export const toLocalInput = v => { if (!v) return ''; const d = new Date(v), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+export const fromLocalInput = v => v ? new Date(v).toISOString() : null;
+export const urgPill = u => `<span class="pill urg-${u}">${URG[u][0]} ${URG[u][1]}</span>`;
+export const stPill = s => `<span class="pill st-${s}">${STATUS[s]}</span>`;
 const loc = i => [i.zone_name, i.line_name, i.inst_name].filter(Boolean).join(' · ') || '—';
-const slug = u => u.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
-const staff = () => S.me && ['MANTENIMIENTO', 'ADMIN'].includes(S.me.role);
+export const slug = u => u.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+export const staff = () => S.me && ['MANTENIMIENTO', 'ADMIN'].includes(S.me.role);
 
-async function rpc(name, args = {}) {
+export async function rpc(name, args = {}) {
   const { data, error } = await sb.rpc(name, args);
   if (error) throw new Error(error.message);
   return data;
 }
-function flash(msg, kind = 'ok') {
+export function flash(msg, kind = 'ok') {
   const el = document.createElement('div'); el.className = `flash flash-${kind}`; el.textContent = msg;
   const box = document.getElementById('flashbox'); if (box) { box.prepend(el); setTimeout(() => el.remove(), 6000); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 }
-async function guard(fn, btn) {
+export async function guard(fn, btn) {
   if (btn) btn.disabled = true;
   try { return await fn(); } catch (e) { flash(e.message || String(e), 'error'); } finally { if (btn) btn.disabled = false; }
 }
@@ -77,14 +78,15 @@ async function signedUrls(photos) {
 }
 
 // ---------------------------------------------------------------- estructura (barra superior)
-function shell(inner) {
+export function shell(inner) {
   const me = S.me, isAdmin = me.role === 'ADMIN';
   return `
 <header class="topbar">
   <a class="brand" href="#/">🔧 <span>${esc(S.ref.company || 'Mantenimiento')}</span></a>
   <nav class="nav" id="nav">
     <a href="#/">Inicio</a><a href="#/incidencias">Incidencias</a>
-    ${isAdmin ? '' : ''}
+    ${staff() ? '<a href="#/preventivo">Preventivo</a><a href="#/equipos">Equipos</a>' : ''}
+    ${isAdmin ? '<a href="#/estadisticas">Estadísticas</a><a href="#/informes">Informes</a><a href="#/admin">Administración</a>' : ''}
   </nav>
   <div class="topright">
     <button class="bell" id="bell" type="button" aria-label="Alertas">🔔<span class="badge" id="bell-count" hidden>0</span></button>
@@ -109,12 +111,13 @@ function wireShell() {
   };
   renderBell(); paintBanner();
 }
+export const nlink = n => n.incident_id ? `#/incidencia/${n.incident_id}` : n.plan_id ? `#/preventivo/${n.plan_id}` : '#/';
 function renderBell() {
   const c = document.getElementById('bell-count'), panel = document.getElementById('alertpanel'); if (!c) return;
   c.hidden = !S.notifs.length; c.textContent = S.notifs.length;
   if (!panel.hidden) {
     panel.innerHTML = `<div class="head"><span>Alertas</span><a href="#" id="markall" style="padding:0;border:0">Marcar leídas</a></div>` +
-      (S.notifs.length ? S.notifs.map(n => `<a href="#/incidencia/${n.incident_id}" data-id="${n.id}">${n.urgency ? `<b>${esc(URG[n.urgency][1])}</b> · ` : ''}${esc(n.message)}<br><small>${esc(fmtDT(n.created_at))}</small></a>`).join('')
+      (S.notifs.length ? S.notifs.map(n => `<a href="${nlink(n)}" data-id="${n.id}">${n.urgency ? `<b>${esc(URG[n.urgency][1])}</b> · ` : ''}${esc(n.message)}<br><small>${esc(fmtDT(n.created_at))}</small></a>`).join('')
         : '<div class="empty muted">No hay alertas nuevas.</div>');
   }
 }
@@ -125,7 +128,7 @@ function paintBanner() {
   const b = document.getElementById('alertbanner'), n = S.banner;
   if (!b) return; if (!n || !staff() || !S.notifs.some(x => x.id === n.id)) { b.hidden = true; return; }
   b.className = 'alertbanner u-' + (n.urgency || 'CRITICA'); b.textContent = '🔔 ' + n.message + (S.notifs.length > 1 ? `  (+${S.notifs.length - 1} más)` : ''); b.hidden = false;
-  b.onclick = () => { S.banner = null; b.hidden = true; location.hash = `#/incidencia/${n.incident_id}`; };
+  b.onclick = () => { S.banner = null; b.hidden = true; location.hash = nlink(n); };
 }
 function showBanner(n) {
   if (!staff()) return; S.banner = n; paintBanner(); beep();
@@ -145,7 +148,7 @@ function startRealtime() {
 function stopRealtime() { if (S.channel) { sb.removeChannel(S.channel); S.channel = null; } clearInterval(S.poll); }
 
 // ---------------------------------------------------------------- tarjetas
-function card(i, showTech = true) {
+export function card(i, showTech = true) {
   return `<a class="card inc urgb-${i.urgency}" href="#/incidencia/${i.id}">
   <div class="row between"><strong class="num">${esc(i.number)}</strong><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
   <p class="desc">${esc(i.description.length > 140 ? i.description.slice(0, 137) + '…' : i.description)}</p>
@@ -164,23 +167,24 @@ async function viewHome(q) {
       ${rows.map(r => card(r)).join('') || '<div class="card center muted">Todavía no hay incidencias en tu área.</div>'}`);
   }
   const group = ['pendientes', 'proceso', 'resueltas'].includes(q.group) ? q.group : 'pendientes';
-  const [rows, d] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff')]);
+  const [rows, d, pv] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff'), rpc('preventive_summary')]);
   const t = (k, ic, lb) => `<div class="tile t-${k}"><b>${d.by_urg[k] || 0}</b><span>${ic} ${lb}</span></div>`;
   return shell(`<div class="row between wrap"><h1>Panel de mantenimiento</h1><a class="btn btn-primary" href="#/nueva">＋ Nueva incidencia</a></div>
     <div class="tiles">${t('CRITICA', '🔴', 'Críticas sin resolver')}${t('ALTA', '🟠', 'Alta urgencia')}${t('MEDIA', '🟡', 'Medias')}${t('BAJA', '🟢', 'Bajas')}</div>
     <div class="tiles tiles-sm"><div class="tile"><b>${d.pendientes}</b><span>Pendientes</span></div><div class="tile"><b>${d.proceso}</b><span>En proceso</span></div>
     <div class="tile"><b>${d.hoy}</b><span>Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>Tiempo medio resolución</span></div></div>
+    ${pv.overdue || pv.soon ? `<a class="card prev-alert ${pv.overdue ? 'late' : ''}" href="#/preventivo">🗓️ Preventivo: ${pv.overdue ? `<strong>${pv.overdue} revisión(es) vencida(s)</strong> ` : ''}${pv.soon ? `${pv.soon} próxima(s) en 3 días` : ''}</a>` : ''}
     <div class="tabs">${[['pendientes', 'INCIDENCIAS PENDIENTES'], ['proceso', 'EN PROCESO'], ['resueltas', 'RESUELTAS']].map(([k, l]) => `<a class="${group === k ? 'on' : ''}" href="#/?group=${k}">${l}</a>`).join('')}</div>
     ${rows.map(r => card(r)).join('') || '<div class="card center muted">No hay incidencias en esta lista. 🎉</div>'}`);
 }
 
 async function viewList(q) {
   const R = S.ref, f = q;
-  const rows = await rpc('list_incidents', { p_filters: f, p_limit: 500 });
+  const rows = await rpc('list_incidents', { p_filters: f, p_limit: 500 }); currentRows = rows;
   const opt = (arr, val, label, all = 'Todos') => `<option value="">${all}</option>` + arr.map(x => `<option value="${esc(x[val])}" ${String(f[curKey]) === String(x[val]) ? 'selected' : ''}>${esc(label(x))}</option>`).join('');
   let curKey = '';
   const sel = (key, name, arr, val, label, all) => { curKey = key; return `<label>${name}<select name="${key}">${opt(arr, val, label, all)}</select></label>`; };
-  return shell(`<div class="row between wrap"><h1>Incidencias <small class="muted">(${rows.length})</small></h1></div>
+  return shell(`<div class="row between wrap"><h1>Incidencias <small class="muted">(${rows.length})</small></h1>${staff() ? '<span class="row gap"><button class="btn" id="exp-xlsx">⬇ Excel</button><button class="btn" id="exp-csv">⬇ CSV</button></span>' : ''}</div>
   <details class="card filters" ${Object.keys(q).length ? 'open' : ''}><summary>🔎 Buscar y filtrar</summary>
   <form id="ffilter" class="grid-form">
     <label>Número / texto<input name="q" value="${esc(f.q || '')}" placeholder="INC-2026-…"></label>
@@ -202,6 +206,7 @@ async function viewList(q) {
   <div class="mobile-only">${rows.map(r => card(r)).join('') || '<div class="card center muted">Sin resultados.</div>'}</div>`);
 }
 function wireList() {
+  ['xlsx', 'csv'].forEach(fmt => { const b = document.getElementById('exp-' + fmt); if (b) b.onclick = () => guard(() => exportIncidents(fmt, currentRows), b); });
   document.getElementById('ffilter').onsubmit = e => { e.preventDefault(); const p = new URLSearchParams();
     new FormData(e.target).forEach((v, k) => { if (v) p.set(k, v); }); location.hash = '#/incidencias' + (p.toString() ? '?' + p : ''); };
 }
@@ -255,7 +260,7 @@ function wireNew() {
 }
 
 // ---- ficha
-let currentDetail = null;
+let currentDetail = null; let currentRows = [];
 async function viewDetail(id) {
   const d = await rpc('incident_detail', { p_id: Number(id) }); currentDetail = d;
   const i = d.incident, a = d.action, isStaff = staff(), edit = d.can_edit, urls = await signedUrls(d.photos);
@@ -369,11 +374,11 @@ function parseHash() {
   const raw = location.hash.replace(/^#/, '') || '/'; const [path, qs] = raw.split('?');
   return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) };
 }
-async function route() {
+export async function route() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) { stopRealtime(); S.me = null; $app.innerHTML = viewLogin(); wireLogin(); return; }
   try {
-    if (!S.me) { const r = await rpc('ref_data'); S.ref = r; S.me = r.me; S.ref.company = 'FRUNET'; startRealtime(); }
+    if (!S.me) { const r = await rpc('ref_data'); S.ref = r; S.me = r.me; S.ref.company = 'FRUNET'; startRealtime(); startExtras(); }
   } catch (e) { await sb.auth.signOut(); $app.innerHTML = viewLogin(); wireLogin(); flash('Tu usuario no está activo.', 'error'); return; }
   const { parts, q } = parseHash(); let html, after = () => {};
   try {
@@ -382,7 +387,7 @@ async function route() {
     else if (parts[0] === 'nueva') { html = viewNew(); after = wireNew; }
     else if (parts[0] === 'incidencia') { html = await viewDetail(parts[1]); after = () => wireDetail(parts[1]); }
     else if (parts[0] === 'cuenta') { html = viewAccount(); after = wireAccount; }
-    else html = await viewHome({});
+    else { const x = await dispatch(parts, q); if (x) { html = x.html; after = x.after || after; } else html = await viewHome({}); }
   } catch (e) { html = shell(`<div class="card center"><h1>Error</h1><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/">Volver al inicio</a></div>`); }
   $app.innerHTML = html; wireShell(); after(); window.scrollTo(0, 0);
   const fl = sessionStorage.getItem('flash'); if (fl) { sessionStorage.removeItem('flash'); const [m, k] = JSON.parse(fl); flash(m, k); }
