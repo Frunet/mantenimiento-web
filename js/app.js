@@ -1,6 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js';
 import { dispatch, startExtras, exportIncidents } from './extra.js';
+import { viewDetail, viewResolve, viewPause } from './flow.js';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -11,9 +12,15 @@ export const URG = { CRITICA: ['🔴', 'CRÍTICA', 'Afecta a producción, seguri
   ALTA: ['🟠', 'ALTA', 'Afecta considerablemente al funcionamiento y necesita atención rápida.'],
   MEDIA: ['🟡', 'MEDIA', 'Afecta al funcionamiento pero se puede continuar trabajando.'],
   BAJA: ['🟢', 'BAJA', 'Problema menor que puede solucionarse cuando haya disponibilidad.'] };
-export const STATUS = { PENDIENTE: 'Pendiente', ASIGNADA: 'Asignada', EN_PROCESO: 'En proceso', PENDIENTE_MATERIAL: 'Pendiente de material',
+export const STATUS = { PENDIENTE: 'Pendiente', ASIGNADA: 'Asignada', EN_PROCESO: 'En proceso', PENDIENTE_ACTUACION: 'Pendiente de actuación',
   RESUELTA: 'Resuelta', CERRADA: 'Cerrada', CANCELADA: 'Cancelada' };
-export const OPEN = ['PENDIENTE', 'ASIGNADA', 'EN_PROCESO', 'PENDIENTE_MATERIAL'];
+export const PAUSE_LABEL = { FALTA_MATERIAL: 'Falta material', MATERIAL_COMPRA: 'Material pendiente de compra', MATERIAL_RECIBIR: 'Material pendiente de recibir',
+  TECNICO_EXTERNO: 'Necesario técnico externo', AUTORIZACION: 'Pendiente de autorización', NO_PARAR_MAQUINA: 'No se puede parar la máquina',
+  DIAGNOSTICO: 'Necesita diagnóstico adicional', PROGRAMAR: 'Pendiente de programar', OTRO: 'Otro' };
+export const RES_LABEL = { REPARACION: 'Reparación', SUSTITUCION_PIEZA: 'Sustitución de pieza', AJUSTE: 'Ajuste / regulación', LIMPIEZA: 'Limpieza / mantenimiento',
+  SUSTITUCION_MATERIAL: 'Sustitución de material', OTRO: 'Otro' };
+export const EQ_LABEL = { SI: 'Sí', SI_OBSERVACIONES: 'Sí, pero con observaciones', NO: 'No' };
+export const OPEN = ['PENDIENTE', 'ASIGNADA', 'EN_PROCESO', 'PENDIENTE_ACTUACION'];
 const TZ = 'Europe/Madrid';
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,7 +33,7 @@ export const toLocalInput = v => { if (!v) return ''; const d = new Date(v), p =
 export const fromLocalInput = v => v ? new Date(v).toISOString() : null;
 export const urgPill = u => `<span class="pill urg-${u}">${URG[u][0]} ${URG[u][1]}</span>`;
 export const stPill = s => `<span class="pill st-${s}">${STATUS[s]}</span>`;
-const loc = i => [i.zone_name, i.line_name, i.inst_name].filter(Boolean).join(' · ') || '—';
+export const loc = i => [i.zone_name, i.line_name, i.inst_name].filter(Boolean).join(' · ') || '—';
 export const slug = u => u.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
 export const staff = () => S.me && ['MANTENIMIENTO', 'ADMIN'].includes(S.me.role);
 
@@ -45,7 +52,7 @@ export async function guard(fn, btn) {
 }
 
 // Reduce fotos (máx. 1600 px, JPEG) antes de subirlas
-function compressImage(file, max = 1600, quality = 0.82) {
+export function compressImage(file, max = 1600, quality = 0.82) {
   return new Promise(resolve => {
     if (!file.type.startsWith('image/') || file.type === 'image/gif') return resolve(file);
     const url = URL.createObjectURL(file), img = new Image();
@@ -60,7 +67,7 @@ function compressImage(file, max = 1600, quality = 0.82) {
     img.src = url;
   });
 }
-async function uploadPhotos(incidentId, files) {
+export async function uploadPhotos(incidentId, files) {
   const paths = [];
   for (const f of files) {
     const ext = (f.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
@@ -71,7 +78,7 @@ async function uploadPhotos(incidentId, files) {
   }
   return paths;
 }
-async function signedUrls(photos) {
+export async function signedUrls(photos) {
   if (!photos.length) return {};
   const { data } = await sb.storage.from('incident-photos').createSignedUrls(photos.map(p => p.path), 3600);
   const m = {}; (data || []).forEach(d => { if (d.signedUrl) m[d.path] = d.signedUrl; }); return m;
@@ -147,13 +154,15 @@ function startRealtime() {
 }
 function stopRealtime() { if (S.channel) { sb.removeChannel(S.channel); S.channel = null; } clearInterval(S.poll); }
 
+let currentRows = [];
+
 // ---------------------------------------------------------------- tarjetas
 export function card(i, showTech = true) {
   return `<a class="card inc urgb-${i.urgency}" href="#/incidencia/${i.id}">
   <div class="row between"><strong class="num">${esc(i.number)}</strong><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
   <p class="desc">${esc(i.description.length > 140 ? i.description.slice(0, 137) + '…' : i.description)}</p>
   <div class="meta"><span>🏭 ${esc(i.area_name)}</span><span>📍 ${esc(loc(i))}</span>${i.equip_name ? `<span>⚙️ ${esc(i.equip_name)}</span>` : ''}
-  <span>🕒 ${fmtDT(i.created_at)}${OPEN.includes(i.status) ? ' · hace ' + since(i.created_at) : ''}</span>
+  <span>🕒 ${fmtDT(i.created_at)}${OPEN.includes(i.status) ? ' · hace ' + since(i.created_at) : ''}</span>${i.status === 'PENDIENTE_ACTUACION' && i.pause_reason ? `<span>🟠 ${esc(PAUSE_LABEL[i.pause_reason] || '')}</span>` : ''}
   ${showTech ? `<span>👷 ${esc(i.tech_name || 'Sin asignar')}</span>` : ''}${i.n_photos > 0 ? `<span>📷 ${i.n_photos}</span>` : ''}</div></a>`;
 }
 
@@ -166,16 +175,19 @@ async function viewHome(q) {
       <div class="row between wrap"><h2>MIS INCIDENCIAS <small class="muted">· ${esc(S.me.area_name)}</small></h2><span class="muted">${ab} abiertas · ${rs} resueltas</span></div>
       ${rows.map(r => card(r)).join('') || '<div class="card center muted">Todavía no hay incidencias en tu área.</div>'}`);
   }
-  const group = ['pendientes', 'proceso', 'resueltas'].includes(q.group) ? q.group : 'pendientes';
+  const group = ['pendientes', 'asignadas', 'proceso', 'actuacion', 'resueltas'].includes(q.group) ? q.group : 'pendientes';
   const [rows, d, pv] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff'), rpc('preventive_summary')]);
   const t = (k, ic, lb) => `<div class="tile t-${k}"><b>${d.by_urg[k] || 0}</b><span>${ic} ${lb}</span></div>`;
+  const st = (cls, ic, lb, n, g) => `<a class="tile s-${cls}" href="#/?group=${g}"><b>${n}</b><span>${ic} ${lb}</span></a>`;
   const pst = await pushState(); const pushBanner = pst === 'off' || pst === 'ios-install' ? `<div class="card prev-alert" style="border-left-color:var(--primary)"><div class="row between wrap"><span>🔔 <strong>Activa los avisos en este móvil</strong> para recibir las incidencias nuevas aunque la app esté cerrada.</span>${pst === 'off' ? '<button class="btn btn-primary btn-sm" id="push-btn">Activar avisos</button>' : '<a class="btn btn-sm" href="#/cuenta">Cómo hacerlo</a>'}</div></div>` : '';
   return shell(`${pushBanner}<div class="row between wrap"><h1>Panel de mantenimiento</h1><a class="btn btn-primary" href="#/nueva">＋ Nueva incidencia</a></div>
-    <div class="tiles">${t('CRITICA', '🔴', 'Críticas sin resolver')}${t('ALTA', '🟠', 'Alta urgencia')}${t('MEDIA', '🟡', 'Medias')}${t('BAJA', '🟢', 'Bajas')}</div>
-    <div class="tiles tiles-sm"><div class="tile"><b>${d.pendientes}</b><span>Pendientes</span></div><div class="tile"><b>${d.proceso}</b><span>En proceso</span></div>
-    <div class="tile"><b>${d.hoy}</b><span>Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>Tiempo medio resolución</span></div></div>
+    <div class="tiles tiles5">${st('PENDIENTE', '🔴', 'PENDIENTES', d.pendientes, 'pendientes')}${st('ASIGNADA', '🔵', 'ASIGNADAS', d.asignadas, 'asignadas')}${st('EN_PROCESO', '🟡', 'EN PROCESO', d.proceso, 'proceso')}
+      ${st('PENDIENTE_ACTUACION', '🟠', 'PEND. DE ACTUACIÓN', d.pend_actuacion, 'actuacion')}${st('RESUELTA', '🟢', 'RESUELTAS', d.resueltas, 'resueltas')}</div>
+    <div class="tiles tiles-sm"><div class="tile ${d.mas_24h ? 'warn' : ''}"><b>${d.mas_24h}</b><span>⏰ Pendientes &gt; 24 h</span></div><div class="tile"><b>${d.pend_material}</b><span>📦 Pend. de material</span></div>
+      <div class="tile"><b>${d.pend_externo}</b><span>🧑‍🔧 Pend. técnico externo</span></div><div class="tile"><b>${d.hoy}</b><span>✅ Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>⏱ Tiempo medio resolución</span></div></div>
+    <details class="card"><summary>Por urgencia (sin resolver)</summary><div class="tiles" style="margin-top:.6rem">${t('CRITICA', '🔴', 'Críticas')}${t('ALTA', '🟠', 'Alta')}${t('MEDIA', '🟡', 'Medias')}${t('BAJA', '🟢', 'Bajas')}</div></details>
     ${pv.overdue || pv.soon ? `<a class="card prev-alert ${pv.overdue ? 'late' : ''}" href="#/preventivo">🗓️ Preventivo: ${pv.overdue ? `<strong>${pv.overdue} revisión(es) vencida(s)</strong> ` : ''}${pv.soon ? `${pv.soon} próxima(s) en 3 días` : ''}</a>` : ''}
-    <div class="tabs">${[['pendientes', 'INCIDENCIAS PENDIENTES'], ['proceso', 'EN PROCESO'], ['resueltas', 'RESUELTAS']].map(([k, l]) => `<a class="${group === k ? 'on' : ''}" href="#/?group=${k}">${l}</a>`).join('')}</div>
+    <div class="tabs">${[['pendientes', 'PENDIENTES'], ['asignadas', 'ASIGNADAS'], ['proceso', 'EN PROCESO'], ['actuacion', 'PEND. DE ACTUACIÓN'], ['resueltas', 'RESUELTAS']].map(([k, l]) => `<a class="${group === k ? 'on' : ''}" href="#/?group=${k}">${l}</a>`).join('')}</div>
     ${rows.map(r => card(r)).join('') || '<div class="card center muted">No hay incidencias en esta lista. 🎉</div>'}`);
 }
 
@@ -258,85 +270,6 @@ function wireNew() {
       location.hash = '#/incidencia/' + res.id;
     } catch (err) { flash(err.message, 'error'); btn.disabled = false; btn.textContent = 'ENVIAR INCIDENCIA'; }
   };
-}
-
-// ---- ficha
-let currentDetail = null; let currentRows = [];
-async function viewDetail(id) {
-  const d = await rpc('incident_detail', { p_id: Number(id) }); currentDetail = d;
-  const i = d.incident, a = d.action, isStaff = staff(), edit = d.can_edit, urls = await signedUrls(d.photos);
-  const gal = kind => d.photos.filter(p => p.kind === kind).map(p => urls[p.path] ? `<a href="${esc(urls[p.path])}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(urls[p.path])}" alt="Foto"></a>` : '').join('');
-  const costed = d.materials.filter(m => m.unit_cost != null), total = costed.reduce((s, m) => s + m.quantity * m.unit_cost, 0);
-  const R = S.ref, admin = S.me.role === 'ADMIN';
-  const mm = a && a.minutes_spent != null ? a.minutes_spent : null;
-  return shell(`<a class="back" href="#/">← Volver</a>
-  <div class="row between wrap"><h1>${esc(i.number)}</h1><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
-  <section class="card"><h2>Información de la incidencia</h2><dl class="info">
-    <dt>Fecha y hora</dt><dd>${fmtDT(i.created_at)}</dd><dt>Comunicada por</dt><dd>${esc(i.creator_name)}</dd><dt>Área</dt><dd>${esc(i.area_name)}</dd>
-    <dt>Ubicación</dt><dd>${esc(loc(i))}</dd><dt>Máquina / equipo</dt><dd>${esc(i.equip_name || '—')}</dd><dt>Categoría</dt><dd>${esc(i.category_name || '—')}</dd>
-    <dt>Responsable</dt><dd>${esc(i.tech_name || 'Sin asignar')}</dd>${OPEN.includes(i.status) ? `<dt>Abierta desde</dt><dd>hace ${since(i.created_at)}</dd>` : ''}
-    ${i.resolved_at ? `<dt>Resuelta</dt><dd>${fmtDT(i.resolved_at)}</dd>` : ''}${i.closed_at ? `<dt>Cerrada</dt><dd>${fmtDT(i.closed_at)}</dd>` : ''}</dl>
-    <p class="descbox">${esc(i.description)}</p><div class="gallery">${gal('INCIDENCIA')}</div></section>
-  ${isStaff && d.transitions.length ? `<section class="card"><h2>Gestión</h2><div class="row gap wrap" id="gestion">
-    ${OPEN.includes(i.status) && i.assigned_to !== S.me.id && S.me.role === 'MANTENIMIENTO' ? '<button class="btn btn-primary" data-assign="me">🙋 Asignármela</button>' : ''}
-    ${d.transitions.map(t => `<button class="btn ${['RESUELTA', 'CERRADA'].includes(t) ? 'btn-ok' : ''} ${t === 'CANCELADA' ? 'btn-danger' : ''}" data-status="${t}">${t === 'REABRIR' ? '↩ Reabrir' : '→ ' + STATUS[t]}</button>`).join('')}</div>
-    ${admin && OPEN.includes(i.status) ? `<div class="row gap" style="margin-top:.75rem"><select id="adm-tech">${R.techs.map(t => `<option value="${t.id}" ${i.assigned_to === t.id ? 'selected' : ''}>${esc(t.full_name)}</option>`).join('')}</select><button class="btn" data-assign="sel">Asignar técnico</button></div>` : ''}</section>` : ''}
-  ${isStaff && edit ? `<section class="card"><h2>Actuación de mantenimiento</h2><form id="faction" class="stack"><div class="grid-form">
-    ${admin ? `<label>Técnico responsable<select name="tech"><option value="">—</option>${R.techs.map(t => `<option value="${t.id}" ${i.assigned_to === t.id ? 'selected' : ''}>${esc(t.full_name)}</option>`).join('')}</select></label>`
-      : `<label>Técnico responsable<input value="${esc(i.tech_name || S.me.full_name)}" disabled></label>`}
-    <label>Inicio<input type="datetime-local" name="started" id="started_at" value="${toLocalInput(a?.started_at)}"></label>
-    <label>Fin<input type="datetime-local" name="finished" id="finished_at" value="${toLocalInput(a?.finished_at)}"></label>
-    <div class="timebox"><span>Tiempo empleado</span><div class="row gap"><label class="inline">Horas<input type="number" min="0" name="hours" id="hours" value="${mm != null ? Math.floor(mm / 60) : ''}"></label>
-    <label class="inline">Min<input type="number" min="0" max="59" name="minutes" id="minutes" value="${mm != null ? mm % 60 : ''}"></label></div><small class="muted">Si lo dejas vacío se calcula con inicio y fin.</small></div>
-    <label>Categoría<select name="category"><option value="">—</option>${R.categories.map(c => `<option value="${c.id}" ${i.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
-    <label>Coste del material (€, opcional)<input name="cost" inputmode="decimal" value="${a?.material_cost ?? ''}"></label></div>
-    <label>Trabajo realizado<textarea name="work" rows="4" placeholder="Ej.: Se desmontó el motor, se detectó desgaste del rodamiento y se sustituyó.">${esc(a?.work_done || '')}</textarea></label>
-    <label>Observaciones<textarea name="obs" rows="2">${esc(a?.observations || '')}</textarea></label><button class="btn btn-primary">💾 Guardar actuación</button></form></section>`
-  : a && (a.work_done || a.started_at || a.minutes_spent != null) ? `<section class="card"><h2>Actuación de mantenimiento</h2><dl class="info"><dt>Técnico</dt><dd>${esc(a.tech_name || i.tech_name || '—')}</dd>
-    <dt>Inicio</dt><dd>${fmtDT(a.started_at)}</dd><dt>Fin</dt><dd>${fmtDT(a.finished_at)}</dd><dt>Tiempo empleado</dt><dd>${fmtMin(a.minutes_spent)}</dd></dl>
-    ${a.work_done ? `<h3>Solución aplicada</h3><p class="descbox">${esc(a.work_done)}</p>` : ''}${a.observations ? `<h3>Observaciones</h3><p class="descbox">${esc(a.observations)}</p>` : ''}</section>` : ''}
-  ${d.materials.length || (isStaff && edit) ? `<section class="card" id="materiales"><h2>Materiales utilizados</h2>
-    ${d.materials.length ? `<div class="tablewrap"><table class="table"><thead><tr><th>Material</th><th>Cantidad</th><th>Unidad</th><th>Observaciones</th>${isStaff ? '<th>€/ud</th><th>Importe</th>' : ''}${isStaff && edit ? '<th></th>' : ''}</tr></thead><tbody>
-    ${d.materials.map(m => `<tr><td>${esc(m.name)}</td><td>${+m.quantity}</td><td>${esc(m.unit)}</td><td>${esc(m.notes || '')}</td>${isStaff ? `<td>${m.unit_cost != null ? (+m.unit_cost).toFixed(2) : '—'}</td><td>${m.unit_cost != null ? (m.quantity * m.unit_cost).toFixed(2) + ' €' : '—'}</td>` : ''}
-    ${isStaff && edit ? `<td><button class="linkbtn" data-delmat="${m.id}">✕</button></td>` : ''}</tr>`).join('')}</tbody></table></div>${isStaff && costed.length ? `<p><strong>Coste total del material: ${total.toFixed(2)} €</strong></p>` : ''}` : '<p class="muted">Sin materiales registrados.</p>'}
-    ${isStaff && edit ? `<form id="fmat" class="grid-form mat-form"><label>Material<input name="name" id="mat-name" list="catalog" autocomplete="off" required placeholder="Rodamiento 6204"></label>
-    <label>Cantidad<input name="qty" inputmode="decimal" value="1" required></label><label>Unidad<input name="unit" id="mat-unit" value="Ud" list="units"></label>
-    <label>Coste unitario € (opcional)<input name="cost" id="mat-cost" inputmode="decimal"></label><label>Observaciones<input name="notes" placeholder="Sustitución"></label>
-    <datalist id="catalog">${R.catalog.map(c => `<option value="${esc(c.name)}" data-unit="${esc(c.unit)}" data-cost="${c.unit_cost ?? ''}">`).join('')}</datalist>
-    <datalist id="units"><option>Ud</option><option>m</option><option>kg</option><option>l</option><option>Caja</option></datalist><button class="btn">＋ Añadir material</button></form>` : ''}</section>` : ''}
-  ${gal('REPARACION') || (isStaff && edit) ? `<section class="card"><h2>Fotografías de la reparación</h2><div class="gallery">${gal('REPARACION')}</div>
-    ${isStaff && edit ? '<form id="frep" class="row gap wrap"><input type="file" name="photos" accept="image/*" multiple required><button class="btn">📷 Subir fotos</button></form>' : ''}</section>` : ''}
-  <section class="card"><h2>Historial</h2><ul class="timeline">${d.history.map(h => `<li><time>${fmtDT(h.created_at)}</time> — ${esc(h.detail || h.action)}${h.user && h.action !== 'CREADA' ? ` <small class="muted">· ${esc(h.user)}</small>` : ''}</li>`).join('')}</ul></section>`);
-}
-function wireDetail(id) {
-  const act = (fn, btn) => guard(async () => { await fn(); await route(); }, btn);
-  document.querySelectorAll('[data-assign]').forEach(b => b.onclick = () => act(async () => { const r = await rpc('assign_incident', { p_id: Number(id), p_tech: b.dataset.assign === 'sel' ? document.getElementById('adm-tech').value : null });
-    sessionStorage.setItem('flash', JSON.stringify([r.changed ? 'Incidencia asignada.' : 'La incidencia ya estaba asignada a esa persona.', r.changed ? 'ok' : 'info'])); }, b));
-  document.querySelectorAll('[data-status]').forEach(b => b.onclick = () => {
-    if (b.dataset.status === 'CANCELADA' && !confirm('¿Cancelar la incidencia?')) return;
-    act(async () => { const r = await rpc('change_status', { p_id: Number(id), p_status: b.dataset.status }); sessionStorage.setItem('flash', JSON.stringify(['Estado: ' + STATUS[r.status] + '.', 'ok'])); }, b); });
-  const fa = document.getElementById('faction');
-  if (fa) {
-    fa.onsubmit = e => { e.preventDefault(); const f = new FormData(fa);
-      act(async () => { await rpc('save_action', { p_id: Number(id), p_tech: f.get('tech') || null, p_started: fromLocalInput(f.get('started')), p_finished: fromLocalInput(f.get('finished')),
-        p_hours: num(f.get('hours')), p_minutes: num(f.get('minutes')), p_work: f.get('work'), p_obs: f.get('obs'), p_cost: num((f.get('cost') || '').replace(',', '.')), p_category: num(f.get('category')) });
-        sessionStorage.setItem('flash', JSON.stringify(['Actuación guardada.', 'ok'])); }, fa.querySelector('button')); };
-    const s = document.getElementById('started_at'), fi = document.getElementById('finished_at'), h = document.getElementById('hours'), m = document.getElementById('minutes'); let manual = false;
-    [h, m].forEach(x => x.addEventListener('input', () => manual = true));
-    const calc = () => { if (!s.value || !fi.value || manual) return; const mins = Math.max(0, Math.round((new Date(fi.value) - new Date(s.value)) / 60000)); h.value = Math.floor(mins / 60); m.value = mins % 60; };
-    s.onchange = calc; fi.onchange = calc;
-  }
-  const mn = document.getElementById('mat-name');
-  if (mn) mn.onchange = () => { const o = [...document.querySelectorAll('#catalog option')].find(x => x.value.toLowerCase() === mn.value.trim().toLowerCase()); if (o) { document.getElementById('mat-unit').value = o.dataset.unit || 'Ud'; document.getElementById('mat-cost').value = o.dataset.cost || ''; } };
-  const fm = document.getElementById('fmat');
-  if (fm) fm.onsubmit = e => { e.preventDefault(); const f = new FormData(fm);
-    act(async () => { await rpc('add_material', { p_id: Number(id), p_name: f.get('name'), p_qty: num((f.get('qty') || '').replace(',', '.')), p_unit: f.get('unit'), p_notes: f.get('notes'), p_unit_cost: num((f.get('cost') || '').replace(',', '.')) });
-      sessionStorage.setItem('flash', JSON.stringify(['Material añadido.', 'ok'])); }, fm.querySelector('button')); };
-  document.querySelectorAll('[data-delmat]').forEach(b => b.onclick = () => { if (confirm('¿Quitar este material?')) act(() => rpc('delete_material', { p_id: Number(id), p_mid: Number(b.dataset.delmat) }), b); });
-  const fr = document.getElementById('frep');
-  if (fr) fr.onsubmit = e => { e.preventDefault(); const inp = fr.querySelector('input[type=file]');
-    act(async () => { const fs = []; for (const f of inp.files) fs.push(await compressImage(f)); await rpc('register_photos', { p_id: Number(id), p_kind: 'REPARACION', p_paths: await uploadPhotos(id, fs) });
-      sessionStorage.setItem('flash', JSON.stringify([fs.length + ' foto(s) añadida(s).', 'ok'])); }, fr.querySelector('button')); };
 }
 
 // ---------------------------------------------------------------- notificaciones push (móvil)
@@ -427,7 +360,7 @@ export async function route() {
     if (!parts.length) html = await viewHome(q);
     else if (parts[0] === 'incidencias') { html = await viewList(q); after = wireList; }
     else if (parts[0] === 'nueva') { html = viewNew(); after = wireNew; }
-    else if (parts[0] === 'incidencia') { html = await viewDetail(parts[1]); after = () => wireDetail(parts[1]); }
+    else if (parts[0] === 'incidencia') { const v = parts[2] === 'resolver' ? await viewResolve(parts[1]) : parts[2] === 'pendiente' ? await viewPause(parts[1]) : await viewDetail(parts[1]); html = v.html; after = v.after || after; }
     else if (parts[0] === 'cuenta') { html = await viewAccount(); after = wireAccount; }
     else { const x = await dispatch(parts, q); if (x) { html = x.html; after = x.after || after; } else html = await viewHome({}); }
   } catch (e) { html = shell(`<div class="card center"><h1>Error</h1><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/">Volver al inicio</a></div>`); }

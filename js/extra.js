@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb } from './app.js';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -114,7 +114,7 @@ async function viewStats(q) {
   const urg = Object.keys(URG).map(k => [URG[k][1], s.by_urgency[k] || 0, k]);
   return { html: shell(`<div class="row between wrap"><h1>Estadísticas</h1><form id="fst" class="row gap wrap"><input type="date" name="date_from" value="${esc(q.date_from || '')}"><input type="date" name="date_to" value="${esc(q.date_to || '')}"><button class="btn">Filtrar</button></form></div>
   <div class="tiles tiles-sm"><div class="tile"><b>${s.total}</b><span>Total incidencias</span></div><div class="tile"><b>${fmtMin(s.avg_response_min)}</b><span>Tiempo medio de respuesta</span></div><div class="tile"><b>${fmtMin(s.avg_resolution_min)}</b><span>Tiempo medio de resolución</span></div>
-  <div class="tile"><b>${st.PENDIENTE_MATERIAL || 0}</b><span>Pend. de material</span></div><div class="tile"><b>${(st.PENDIENTE || 0) + (st.ASIGNADA || 0) + (st.EN_PROCESO || 0)}</b><span>Pendientes / en curso</span></div><div class="tile"><b>${(st.RESUELTA || 0) + (st.CERRADA || 0)}</b><span>Resueltas</span></div></div>
+  <div class="tile"><b>${st.PENDIENTE_ACTUACION || 0}</b><span>Pend. de actuación</span></div><div class="tile"><b>${(st.PENDIENTE || 0) + (st.ASIGNADA || 0) + (st.EN_PROCESO || 0)}</b><span>Pendientes / en curso</span></div><div class="tile"><b>${(st.RESUELTA || 0) + (st.CERRADA || 0)}</b><span>Resueltas</span></div></div>
   <div class="stats-grid"><section class="card"><h2>Por área</h2>${bars(s.by_area)}</section><section class="card"><h2>Por urgencia</h2>${urg.map(u => bars([[u[0], u[1]]], `var(--u-${u[2]})`)).join('')}</section>
   <section class="card"><h2>Por mes</h2>${bars(s.by_month)}</section><section class="card"><h2>Por categoría</h2>${bars(s.by_category)}</section>
   <section class="card"><h2>Máquinas con más averías</h2>${bars(s.by_equipment, 'var(--u-ALTA)')}</section><section class="card"><h2>Incidencias por técnico</h2>${bars(s.by_tech)}</section></div>
@@ -137,9 +137,9 @@ async function saveTable(fmt, name, sheets) {      // sheets: {hoja: [cabeceras,
 }
 export async function exportIncidents(fmt, rows) {
   const ex = Object.fromEntries((await rpc('export_extra', { p_ids: rows.map(r => r.id) })).map(e => [e.id, e]));
-  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Zona', 'Línea', 'Instalación', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Trabajo realizado', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
+  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Zona', 'Línea', 'Instalación', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
   const data = rows.map(r => { const e = ex[r.id] || {}; return [r.number, fmtDT(r.created_at), r.area_name, r.creator_name, r.zone_name || '', r.line_name || '', r.inst_name || '', r.equip_name || '', r.category_name || '', URG[r.urgency][1], STATUS[r.status], r.tech_name || '',
-    r.description, e.started_at ? fmtDT(e.started_at) : '', e.finished_at ? fmtDT(e.finished_at) : '', e.minutes_spent ?? '', e.work_done || '', e.materials || '', r.resolved_at ? fmtDT(r.resolved_at) : '', r.closed_at ? fmtDT(r.closed_at) : '']; });
+    r.description, e.started_at ? fmtDT(e.started_at) : '', e.finished_at ? fmtDT(e.finished_at) : '', e.minutes_spent ?? '', RES_LABEL[e.resolution_type] || '', e.work_done || '', EQ_LABEL[e.equipment_state] || '', e.materials || '', r.resolved_at ? fmtDT(r.resolved_at) : '', r.closed_at ? fmtDT(r.closed_at) : '']; });
   await saveTable(fmt, 'incidencias', { Incidencias: [H, ...data] });
 }
 const REP = { tecnico: ['Por técnico', ['Técnico', 'Incidencias', 'Horas', 'Coste material (€)']], equipo: ['Por equipo', ['Equipo', 'Incidencias', 'Horas', 'Coste material (€)']], area: ['Por área', ['Área', 'Incidencias', 'Horas', 'Coste material (€)']],
@@ -165,7 +165,7 @@ async function viewUsers() {
   const u = await rpc('list_users');
   return shell(`${back('#/admin', 'Administración')}<div class="row between wrap"><h1>Usuarios</h1><a class="btn btn-primary" href="#/admin/usuario/nuevo">＋ Nuevo usuario</a></div>
   <div class="tablewrap"><table class="table"><thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Área</th><th>Estado</th><th></th></tr></thead><tbody>
-  ${u.map(x => `<tr class="${x.active ? '' : 'inactive'}"><td>${esc(x.username)}</td><td>${esc(x.full_name)}</td><td>${esc({ ADMIN: 'Administrador', MANTENIMIENTO: 'Mantenimiento', ENCARGADO: 'Encargado' }[x.role])}</td><td>${esc(x.area_name || '—')}</td><td>${x.active ? 'Activo' : 'Desactivado'}</td>
+  ${u.map(x => `<tr class="${x.active ? '' : 'inactive'}"><td>${esc(x.username)}</td><td>${esc(x.full_name)}</td><td>${esc({ ADMIN: 'Administrador', MANTENIMIENTO: 'Mantenimiento', ENCARGADO: 'Encargado' }[x.role])}</td><td>${esc(x.area_name || '—')}</td><td>${x.active ? 'Activo' : 'Desactivado'}${x.is_manager ? ' · <span class="pill">Responsable</span>' : ''}</td>
   <td><a class="btn btn-sm" href="#/admin/usuario/${x.id}">Editar</a></td></tr>`).join('')}</tbody></table></div>`);
 }
 async function viewUserForm(id) {
@@ -177,9 +177,10 @@ async function viewUserForm(id) {
   <label>Rol<select name="role" id="role">${[['ENCARGADO', 'Encargado'], ['MANTENIMIENTO', 'Mantenimiento'], ['ADMIN', 'Administrador']].map(([k, v]) => `<option value="${k}" ${x.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   <label id="area-wrap">Área (solo encargados)<select name="area_id"><option value="">—</option>${S.ref.areas.map(a => `<option value="${a.id}" ${x.area_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
   <label>${u ? 'Nueva contraseña (vacío = no cambiar)' : 'Contraseña (mín. 8)'}<input type="password" name="password" autocomplete="new-password" minlength="8" ${u ? '' : 'required'}></label>
-  <label class="check"><input type="checkbox" name="active" ${x.active ? 'checked' : ''}> Activo</label></div><button class="btn btn-primary">Guardar</button></form>`),
-    after: () => { const f = document.getElementById('fus'), r = f.role, w = document.getElementById('area-wrap'); const t = () => { w.style.display = r.value === 'ENCARGADO' ? '' : 'none'; }; r.onchange = t; t();
-      f.onsubmit = ev => { ev.preventDefault(); const o = form2obj(f); o.active = f.active.checked; if (u) o.id = u.id; if (!o.password) delete o.password;
+  <label class="check"><input type="checkbox" name="active" ${x.active ? 'checked' : ''}> Activo</label>
+  <label class="check" id="mgr-wrap"><input type="checkbox" name="is_manager" ${x.is_manager ? 'checked' : ''}> Responsable de mantenimiento (puede asignar a otros técnicos y corregir tiempos)</label></div><button class="btn btn-primary">Guardar</button></form>`),
+    after: () => { const f = document.getElementById('fus'), r = f.role, w = document.getElementById('area-wrap'), mw = document.getElementById('mgr-wrap'); const t = () => { w.style.display = r.value === 'ENCARGADO' ? '' : 'none'; mw.style.display = r.value === 'MANTENIMIENTO' ? '' : 'none'; }; r.onchange = t; t();
+      f.onsubmit = ev => { ev.preventDefault(); const o = form2obj(f); o.active = f.active.checked; o.is_manager = f.is_manager.checked; if (u) o.id = u.id; if (!o.password) delete o.password;
         act(async () => { await rpc('save_user', { p: o }); done('Usuario guardado.'); }, f.querySelector('button.btn-primary'), '#/admin/usuarios'); }; } };
 }
 async function viewSimple(kind) {
