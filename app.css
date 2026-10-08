@@ -161,3 +161,6 @@ details summary{cursor:pointer;font-weight:600}
 .tprev{min-width:640px}.tprev th:nth-child(1){width:24%}.tprev th:nth-child(2){width:14%}.tprev th:nth-child(3){width:16%}
 .tprev td{vertical-align:top;overflow-wrap:anywhere}.tprev td.obs{white-space:pre-wrap;min-width:240px}
 .btn-danger{color:var(--danger);border-color:var(--danger)}
+
+/* panel simplificado del perfil Mantenimiento: 3 botones */
+.tiles3{grid-template-columns:repeat(3,1fr)}.tiles3 .tile b{font-size:1.8rem}.tiles3 .tile span{font-size:.78rem}

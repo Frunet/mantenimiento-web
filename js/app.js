@@ -175,20 +175,27 @@ async function viewHome(q) {
       <div class="row between wrap"><h2>MIS INCIDENCIAS <small class="muted">· ${esc(S.me.area_name)}</small></h2><span class="muted">${ab} abiertas · ${rs} resueltas</span></div>
       ${rows.map(r => card(r)).join('') || '<div class="card center muted">Todavía no hay incidencias en tu área.</div>'}`);
   }
-  const group = ['pendientes', 'asignadas', 'proceso', 'actuacion', 'resueltas'].includes(q.group) ? q.group : 'pendientes';
-  const [rows, d, pv] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff'), rpc('preventive_summary')]);
+  // Perfil Mantenimiento: panel simplificado (3 estados). El administrador conserva el panel completo.
+  const lite = S.me.role === 'MANTENIMIENTO';
+  const groups = lite ? ['pendientes', 'asignadas', 'proceso'] : ['pendientes', 'asignadas', 'proceso', 'actuacion', 'resueltas'];
+  const group = groups.includes(q.group) ? q.group : 'pendientes';
+  const [rows, d, pv, rowsAct] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff'), rpc('preventive_summary'),
+    lite ? rpc('list_incidents', { p_filters: { group: 'actuacion' }, p_limit: 200 }) : Promise.resolve([])]);
   const t = (k, ic, lb) => `<div class="tile t-${k}"><b>${d.by_urg[k] || 0}</b><span>${ic} ${lb}</span></div>`;
   const st = (cls, ic, lb, n, g) => `<a class="tile s-${cls}" href="#/?group=${g}"><b>${n}</b><span>${ic} ${lb}</span></a>`;
   const pst = await pushState(); const pushBanner = pst === 'off' || pst === 'ios-install' ? `<div class="card prev-alert" style="border-left-color:var(--primary)"><div class="row between wrap"><span>🔔 <strong>Activa los avisos en este móvil</strong> para recibir las incidencias nuevas aunque la app esté cerrada.</span>${pst === 'off' ? '<button class="btn btn-primary btn-sm" id="push-btn">Activar avisos</button>' : '<a class="btn btn-sm" href="#/cuenta">Cómo hacerlo</a>'}</div></div>` : '';
   return shell(`${pushBanner}<div class="row between wrap"><h1>Panel de mantenimiento</h1><a class="btn btn-primary" href="#/nueva">＋ Nueva incidencia</a></div>
-    <div class="tiles tiles5">${st('PENDIENTE', '🔴', 'PENDIENTES', d.pendientes, 'pendientes')}${st('ASIGNADA', '🔵', 'ASIGNADAS', d.asignadas, 'asignadas')}${st('EN_PROCESO', '🟡', 'EN PROCESO', d.proceso, 'proceso')}
+    ${lite ? `<div class="tiles tiles3">${st('PENDIENTE', '🔴', 'PENDIENTES', d.pendientes, 'pendientes')}${st('ASIGNADA', '🔵', 'ASIGNADAS', d.asignadas, 'asignadas')}${st('EN_PROCESO', '🟡', 'EN PROCESO', d.proceso, 'proceso')}</div>
+    <div class="tiles tiles-sm"><div class="tile ${d.mas_24h ? 'warn' : ''}"><b>${d.mas_24h}</b><span>⏰ Pendientes &gt; 24 h</span></div></div>`
+    : `<div class="tiles tiles5">${st('PENDIENTE', '🔴', 'PENDIENTES', d.pendientes, 'pendientes')}${st('ASIGNADA', '🔵', 'ASIGNADAS', d.asignadas, 'asignadas')}${st('EN_PROCESO', '🟡', 'EN PROCESO', d.proceso, 'proceso')}
       ${st('PENDIENTE_ACTUACION', '🟠', 'PEND. DE ACTUACIÓN', d.pend_actuacion, 'actuacion')}${st('RESUELTA', '🟢', 'RESUELTAS', d.resueltas, 'resueltas')}</div>
     <div class="tiles tiles-sm"><div class="tile ${d.mas_24h ? 'warn' : ''}"><b>${d.mas_24h}</b><span>⏰ Pendientes &gt; 24 h</span></div><div class="tile"><b>${d.pend_material}</b><span>📦 Pend. de material</span></div>
-      <div class="tile"><b>${d.pend_externo}</b><span>🧑‍🔧 Pend. técnico externo</span></div><div class="tile"><b>${d.hoy}</b><span>✅ Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>⏱ Tiempo medio resolución</span></div></div>
+      <div class="tile"><b>${d.pend_externo}</b><span>🧑‍🔧 Pend. técnico externo</span></div><div class="tile"><b>${d.hoy}</b><span>✅ Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>⏱ Tiempo medio resolución</span></div></div>`}
     <details class="card"><summary>Por urgencia (sin resolver)</summary><div class="tiles" style="margin-top:.6rem">${t('CRITICA', '🔴', 'Críticas')}${t('ALTA', '🟠', 'Alta')}${t('MEDIA', '🟡', 'Medias')}${t('BAJA', '🟢', 'Bajas')}</div></details>
     ${pv.overdue || pv.soon ? `<a class="card prev-alert ${pv.overdue ? 'late' : ''}" href="#/preventivo">🗓️ Preventivo: ${pv.overdue ? `<strong>${pv.overdue} revisión(es) vencida(s)</strong> ` : ''}${pv.soon ? `${pv.soon} próxima(s) en 3 días` : ''}</a>` : ''}
-    <div class="tabs">${[['pendientes', 'PENDIENTES'], ['asignadas', 'ASIGNADAS'], ['proceso', 'EN PROCESO'], ['actuacion', 'PEND. DE ACTUACIÓN'], ['resueltas', 'RESUELTAS']].map(([k, l]) => `<a class="${group === k ? 'on' : ''}" href="#/?group=${k}">${l}</a>`).join('')}</div>
-    ${rows.map(r => card(r)).join('') || '<div class="card center muted">No hay incidencias en esta lista. 🎉</div>'}`);
+    <div class="tabs">${(lite ? [['pendientes', 'PENDIENTES'], ['asignadas', 'ASIGNADAS'], ['proceso', 'EN PROCESO']] : [['pendientes', 'PENDIENTES'], ['asignadas', 'ASIGNADAS'], ['proceso', 'EN PROCESO'], ['actuacion', 'PEND. DE ACTUACIÓN'], ['resueltas', 'RESUELTAS']]).map(([k, l]) => `<a class="${group === k ? 'on' : ''}" href="#/?group=${k}">${l}</a>`).join('')}</div>
+    ${rows.map(r => card(r)).join('') || '<div class="card center muted">No hay incidencias en esta lista. 🎉</div>'}
+    ${lite && rowsAct.length ? `<h2 style="margin-top:1.4rem">🟠 Pendientes de actuación <small class="muted">(${rowsAct.length})</small></h2>${rowsAct.map(r => card(r)).join('')}` : ''}`);
 }
 
 async function viewList(q) {
