@@ -169,7 +169,8 @@ async function viewHome(q) {
   const group = ['pendientes', 'proceso', 'resueltas'].includes(q.group) ? q.group : 'pendientes';
   const [rows, d, pv] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff'), rpc('preventive_summary')]);
   const t = (k, ic, lb) => `<div class="tile t-${k}"><b>${d.by_urg[k] || 0}</b><span>${ic} ${lb}</span></div>`;
-  return shell(`<div class="row between wrap"><h1>Panel de mantenimiento</h1><a class="btn btn-primary" href="#/nueva">＋ Nueva incidencia</a></div>
+  const pst = await pushState(); const pushBanner = pst === 'off' || pst === 'ios-install' ? `<div class="card prev-alert" style="border-left-color:var(--primary)"><div class="row between wrap"><span>🔔 <strong>Activa los avisos en este móvil</strong> para recibir las incidencias nuevas aunque la app esté cerrada.</span>${pst === 'off' ? '<button class="btn btn-primary btn-sm" id="push-btn">Activar avisos</button>' : '<a class="btn btn-sm" href="#/cuenta">Cómo hacerlo</a>'}</div></div>` : '';
+  return shell(`${pushBanner}<div class="row between wrap"><h1>Panel de mantenimiento</h1><a class="btn btn-primary" href="#/nueva">＋ Nueva incidencia</a></div>
     <div class="tiles">${t('CRITICA', '🔴', 'Críticas sin resolver')}${t('ALTA', '🟠', 'Alta urgencia')}${t('MEDIA', '🟡', 'Medias')}${t('BAJA', '🟢', 'Bajas')}</div>
     <div class="tiles tiles-sm"><div class="tile"><b>${d.pendientes}</b><span>Pendientes</span></div><div class="tile"><b>${d.proceso}</b><span>En proceso</span></div>
     <div class="tile"><b>${d.hoy}</b><span>Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>Tiempo medio resolución</span></div></div>
@@ -338,12 +339,53 @@ function wireDetail(id) {
       sessionStorage.setItem('flash', JSON.stringify([fs.length + ' foto(s) añadida(s).', 'ok'])); }, fr.querySelector('button')); };
 }
 
+// ---------------------------------------------------------------- notificaciones push (móvil)
+export const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const b64 = s => { const p = '='.repeat((4 - s.length % 4) % 4), r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
+export async function pushState() {
+  if (!pushSupported()) return isIOS() && !standalone() ? 'ios-install' : 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  const reg = await navigator.serviceWorker.getRegistration(); const sub = reg && await reg.pushManager.getSubscription();
+  return sub && Notification.permission === 'granted' ? 'on' : 'off';
+}
+export async function enablePush() {
+  const reg = await navigator.serviceWorker.register('sw.js'); await navigator.serviceWorker.ready;
+  if (await Notification.requestPermission() !== 'granted') throw new Error('Has bloqueado las notificaciones. Actívalas en los ajustes del navegador para este sitio.');
+  const key = await rpc('get_push_key');
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+  await rpc('save_push_subscription', { p: sub.toJSON() });
+}
+export async function disablePush() {
+  const reg = await navigator.serviceWorker.getRegistration(); const sub = reg && await reg.pushManager.getSubscription();
+  if (sub) { await rpc('delete_push_subscription', { p_endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.goto) { const h = e.data.goto.split('#')[1]; if (h) location.hash = '#' + h; } });
+}
+const PUSH_TXT = { on: '✅ Los avisos están <strong>activados</strong> en este dispositivo.', off: 'Recibe un aviso en este móvil aunque la app esté cerrada.',
+  denied: '🚫 Has bloqueado las notificaciones para este sitio. Actívalas en los ajustes del navegador.', unsupported: 'Este navegador no admite notificaciones push.',
+  'ios-install': 'En iPhone/iPad: pulsa <strong>Compartir → Añadir a pantalla de inicio</strong>, abre la app desde el icono y vuelve aquí para activar los avisos.' };
+export async function pushCard() {
+  const st = await pushState(); const can = ['on', 'off'].includes(st);
+  return `<div class="card stack" id="pushcard"><h2>Notificaciones en el móvil</h2><p class="muted">${PUSH_TXT[st]}</p>
+    ${can ? `<button class="btn ${st === 'on' ? '' : 'btn-primary'}" id="push-btn">${st === 'on' ? '🔕 Desactivar avisos en este dispositivo' : '🔔 Activar avisos en este dispositivo'}</button>` : ''}</div>`;
+}
+export function wirePush() {
+  const b = document.getElementById('push-btn'); if (!b) return;
+  b.onclick = () => guard(async () => { const on = b.textContent.includes('Desactivar'); if (on) await disablePush(); else await enablePush();
+    flash(on ? 'Avisos desactivados en este dispositivo.' : 'Avisos activados. Recibirás las incidencias nuevas en este móvil.', 'ok'); await route(); }, b);
+}
+
 // ---- cuenta
-function viewAccount() {
+async function viewAccount() {
   return shell(`<h1>Mi cuenta</h1><div class="card"><p><strong>${esc(S.me.full_name)}</strong> · usuario <code>${esc(S.me.username)}</code> · ${esc(S.me.area_name || S.me.role)}</p>
   <h2>Cambiar contraseña</h2><form id="fpass" class="stack"><label>Contraseña actual<input type="password" name="cur" autocomplete="current-password" required></label>
   <label>Nueva contraseña (mín. 8 caracteres)<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
-  <label>Repetir nueva contraseña<input type="password" name="rep" autocomplete="new-password" minlength="8" required></label><button class="btn btn-primary">Guardar</button></form></div>`);
+  <label>Repetir nueva contraseña<input type="password" name="rep" autocomplete="new-password" minlength="8" required></label><button class="btn btn-primary">Guardar</button></form></div>${await pushCard()}`);
 }
 function wireAccount() {
   const f = document.getElementById('fpass');
@@ -386,10 +428,10 @@ export async function route() {
     else if (parts[0] === 'incidencias') { html = await viewList(q); after = wireList; }
     else if (parts[0] === 'nueva') { html = viewNew(); after = wireNew; }
     else if (parts[0] === 'incidencia') { html = await viewDetail(parts[1]); after = () => wireDetail(parts[1]); }
-    else if (parts[0] === 'cuenta') { html = viewAccount(); after = wireAccount; }
+    else if (parts[0] === 'cuenta') { html = await viewAccount(); after = wireAccount; }
     else { const x = await dispatch(parts, q); if (x) { html = x.html; after = x.after || after; } else html = await viewHome({}); }
   } catch (e) { html = shell(`<div class="card center"><h1>Error</h1><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/">Volver al inicio</a></div>`); }
-  $app.innerHTML = html; wireShell(); after(); window.scrollTo(0, 0);
+  $app.innerHTML = html; wireShell(); after(); wirePush(); window.scrollTo(0, 0);
   const fl = sessionStorage.getItem('flash'); if (fl) { sessionStorage.removeItem('flash'); const [m, k] = JSON.parse(fl); flash(m, k); }
 }
 window.addEventListener('hashchange', route);
