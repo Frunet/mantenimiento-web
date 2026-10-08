@@ -1,7 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js';
-import { dispatch, startExtras, exportIncidents } from './extra.js';
-import { viewDetail, viewResolve, viewPause } from './flow.js';
+export const VERSION = '2026-10-08.3';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.3';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.3';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.3';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -103,7 +104,7 @@ export function shell(inner) {
 </header>
 <div class="alertbanner" id="alertbanner" hidden></div>
 <main class="container"><div id="flashbox"></div>${inner}</main>
-<footer class="foot">${esc(me.full_name)} · ${esc(me.area_name || me.role)} · <a href="#/cuenta">Mi cuenta</a> · <button class="linkbtn" id="logout">Salir</button></footer>`;
+<footer class="foot">${esc(me.full_name)} · ${esc(me.area_name || me.role)} · <a href="#/cuenta">Mi cuenta</a> · <button class="linkbtn" id="logout">Salir</button> · <small>v${VERSION}</small></footer>`;
 }
 function wireShell() {
   document.getElementById('burger').onclick = () => document.getElementById('nav').classList.toggle('open');
