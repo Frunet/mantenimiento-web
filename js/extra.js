@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.7';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.8';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -118,17 +118,65 @@ export async function exportIncidents(fmt, rows) {
 const REP = { tecnico: ['Por técnico', ['Técnico', 'Incidencias', 'Horas', 'Coste material (€)']], equipo: ['Por equipo', ['Equipo', 'Incidencias', 'Horas', 'Coste material (€)']], area: ['Por área', ['Área', 'Incidencias', 'Horas', 'Coste material (€)']],
   categoria: ['Por categoría', ['Categoría', 'Incidencias', 'Horas', 'Coste material (€)']], materiales: ['Materiales', ['Material', 'Unidad', 'Cantidad', 'Coste (€)', 'Incidencias']],
   preventivo: ['Preventivo (proyectos)', ['Estado', 'Proyectos', 'Con fecha vencida']] };
+// ---- Informe resumen (una página)
+const iso = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+const fmtDay = v => new Date(v + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+function period(q) {
+  const t = new Date(), y = t.getFullYear(), m = t.getMonth();
+  const P = { mes: [new Date(y, m, 1), new Date(y, m + 1, 0), 'Este mes'], mesant: [new Date(y, m - 1, 1), new Date(y, m, 0), 'Mes anterior'],
+    trim: [new Date(y, m - 2, 1), new Date(y, m + 1, 0), 'Últimos 3 meses'], anio: [new Date(y, 0, 1), new Date(y, 11, 31), 'Este año'] };
+  if (q.date_from && q.date_to) return { from: q.date_from, to: q.date_to, key: 'custom', label: 'Periodo personalizado' };
+  const k = P[q.p] ? q.p : 'mes'; return { from: iso(P[k][0]), to: iso(P[k][1]), key: k, label: P[k][2] };
+}
+// kind: 'neutral' (solo informa) · 'up' (subir es bueno) · 'down' (bajar es bueno)
+function delta(c, p, kind) {
+  if (c == null || p == null) return '';
+  if (p === 0) return c === 0 ? '' : '<small class="dl neu">nuevo</small>';
+  const pct = Math.round((c - p) / p * 100); if (pct === 0) return '<small class="dl neu">= igual</small>';
+  const up = pct > 0, cls = kind === 'neutral' ? 'neu' : (kind === 'up') === up ? 'good' : 'bad';
+  return `<small class="dl ${cls}">${up ? '▲' : '▼'} ${Math.abs(pct)} %</small>`;
+}
+const kpi = (label, value, d, sub) => `<div class="kpi"><span class="kl">${label}</span><b>${value}</b><span class="kd">${d || ''}${sub ? ` <span class="muted">${sub}</span>` : ''}</span></div>`;
+const projectsByStatus = pj => { const by = {}; pj.forEach(x => { const k = x.status.trim(); by[k] = by[k] || [k, 0, 0]; by[k][1]++; if (x.days_left != null && x.days_left < 0) by[k][2]++; }); return Object.values(by).sort((p, q) => q[1] - p[1]); };
+const nf = (v, dec = 0) => (+v).toLocaleString('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
 async function viewReport(q) {
-  need(isAdmin()); const r = await rpc('report', { p_from: q.date_from || null, p_to: q.date_to || null }); window.__report = r;
-  const pj = await rpc('list_projects'), by = {}; pj.forEach(x => { const k = x.status.trim(); by[k] = by[k] || [k, 0, 0]; by[k][1]++; if (x.days_left != null && x.days_left < 0) by[k][2]++; });
-  r.preventivo = Object.values(by).sort((p, q) => q[1] - p[1]);
-  return { html: shell(`<div class="row between wrap"><h1>Informes</h1><form id="frp" class="row gap wrap"><input type="date" name="date_from" value="${esc(q.date_from || '')}"><input type="date" name="date_to" value="${esc(q.date_to || '')}">
-  <button class="btn">Filtrar</button><button class="btn" type="button" id="rp-xlsx">⬇ Excel</button><button class="btn" type="button" onclick="print()">🖨 Imprimir</button></form></div>
-  <p class="muted">Rango según fecha de creación de la incidencia (preventivo: estado actual de los proyectos). El coste suma el material con coste unitario; si no lo hay, el coste manual de la actuación.</p>
-  ${Object.entries(REP).map(([k, [t, h]]) => `<section class="card"><h2>${t}</h2><div class="tablewrap"><table class="table"><thead><tr>${h.map(x => `<th>${x}</th>`).join('')}</tr></thead><tbody>
-  ${r[k].map(row => `<tr>${row.map(c => `<td>${esc(c ?? 0)}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${h.length}" class="muted center">Sin datos.</td></tr>`}</tbody></table></div></section>`).join('')}`),
-    after: () => { document.getElementById('frp').onsubmit = ev => { ev.preventDefault(); const p = new URLSearchParams(); new FormData(ev.target).forEach((v, k) => { if (v) p.set(k, v); }); location.hash = '#/informes' + (p.toString() ? '?' + p : ''); };
-      document.getElementById('rp-xlsx').onclick = e => guard(() => saveTable('xlsx', 'informe_mantenimiento', Object.fromEntries(Object.entries(REP).map(([k, [t, h]]) => [t, [h, ...r[k]]]))), e.target); } };
+  need(isAdmin()); const per = period(q); const d = await rpc('report_summary', { p_from: per.from, p_to: per.to });
+  const c = d.cur, pv = d.prev, o = d.open_now, abiertas = o.pendientes + o.asignadas + o.proceso + o.pend_actuacion;
+  const pctRes = c.creadas ? Math.round(c.resueltas / c.creadas * 100) : 0, pctPrev = pv.creadas ? Math.round(pv.resueltas / pv.creadas * 100) : null;
+  const urg = Object.keys(URG).map(k => [URG[k][1], d.urgency[k] || 0, k]);
+  const preset = (k, l) => `<a class="btn btn-sm ${per.key === k ? 'btn-primary' : ''}" href="#/informes?p=${k}">${l}</a>`;
+  const html = shell(`<div class="noprint"><h1>Informe de mantenimiento</h1>
+    <div class="row gap wrap" style="margin-bottom:.6rem">${preset('mes', 'Este mes')}${preset('mesant', 'Mes anterior')}${preset('trim', 'Últimos 3 meses')}${preset('anio', 'Este año')}</div>
+    <form id="frp" class="row gap wrap"><input type="date" name="date_from" value="${esc(per.from)}" aria-label="Desde"><input type="date" name="date_to" value="${esc(per.to)}" aria-label="Hasta"><button class="btn">Ver periodo</button>
+      <span style="margin-left:auto" class="row gap wrap"><button class="btn btn-primary" type="button" onclick="print()">🖨 PDF / Imprimir</button><button class="btn" type="button" id="rp-xlsx">⬇ Excel (detalle)</button></span></form></div>
+  <div class="report-head"><h2>Informe de mantenimiento · ${esc(per.label)}</h2>
+    <p class="muted">${fmtDay(d.from)} – ${fmtDay(d.to)} · comparado con ${fmtDay(d.prev_from)} – ${fmtDay(d.prev_to)} · generado el ${fmtDay(iso(new Date()))}</p></div>
+  <div class="kpis">
+    ${kpi('Incidencias', c.creadas, delta(c.creadas, pv.creadas, 'neutral'), `${c.criticas} crítica${c.criticas === 1 ? '' : 's'}`)}
+    ${kpi('Resueltas', c.resueltas, delta(pctRes, pctPrev, 'up'), `${pctRes} % del total`)}
+    ${kpi('Tiempo medio de respuesta', fmtMin(c.resp_min), delta(c.resp_min, pv.resp_min, 'down'), 'desde que se crea')}
+    ${kpi('Tiempo medio de resolución', fmtMin(c.res_min), delta(c.res_min, pv.res_min, 'down'), 'hasta resolver')}
+    ${kpi('Horas de trabajo', nf(c.horas, 1) + ' h', delta(c.horas, pv.horas, 'neutral'), '')}
+    ${kpi('Coste de material', nf(c.coste, 2) + ' €', delta(c.coste, pv.coste, 'neutral'), '')}
+    ${kpi('Abiertas ahora', abiertas, '', o.mas_7d ? `<span class="bad-t">${o.mas_7d} con más de 7 días</span>` : 'ninguna con más de 7 días')}
+    ${kpi('Pend. de actuación', o.pend_actuacion, '', `${o.pendientes} pendientes · ${o.proceso} en proceso`)}
+  </div>
+  <div class="stats-grid">
+    <section class="card"><h2>Máquinas con más averías</h2>${bars(d.top_equipment.map(x => [`${x.name} · ${nf(x.horas, 1)} h`, x.n]), 'var(--u-ALTA)')}</section>
+    <section class="card"><h2>Por área</h2>${bars(d.areas.map(x => [x.name, x.n]))}
+      <p class="muted small">${d.areas.map(x => `<strong>${esc(x.name)}</strong>: ${x.resueltas} resueltas · ${x.criticas} críticas · ${nf(x.horas, 1)} h`).join('<br>')}</p></section>
+    <section class="card"><h2>Por urgencia</h2>${urg.map(u => bars([[u[0], u[1]]], `var(--u-${u[2]})`)).join('')}</section>
+    <section class="card"><h2>Por categoría</h2>${bars(d.categories.map(x => [x.name, x.n]))}</section>
+    <section class="card"><h2>Carga por técnico</h2>${bars(d.techs.map(x => [`${x.name} · ${nf(x.horas, 1)} h`, x.n]))}</section>
+    <section class="card"><h2>Materiales más usados</h2>${d.materials.length ? `<ul class="plain">${d.materials.map(m => `<li><strong>${esc(m.name)}</strong> — ${+m.qty} ${esc(m.unit)}${m.coste != null ? ` · ${nf(m.coste, 2)} €` : ''}</li>`).join('')}</ul>` : '<p class="muted">Sin materiales registrados.</p>'}</section>
+  </div>
+  <section class="card"><h2>Preventivo — proyectos</h2>${d.projects.length ? d.projects.map(x => `<span class="chip">${esc(x.status)} · <b>${x.n}</b>${x.vencidos ? ` <span class="bad-t">(${x.vencidos} con fecha vencida)</span>` : ''}</span>`).join(' ') : '<p class="muted">Sin proyectos.</p>'}</section>`);
+  return { html, after: () => {
+    document.getElementById('frp').onsubmit = ev => { ev.preventDefault(); const f = ev.target; if (!f.date_from.value || !f.date_to.value) return; location.hash = `#/informes?date_from=${f.date_from.value}&date_to=${f.date_to.value}`; };
+    document.getElementById('rp-xlsx').onclick = e => guard(async () => {
+      const [r, pj] = await Promise.all([rpc('report', { p_from: per.from, p_to: per.to }), rpc('list_projects')]); r.preventivo = projectsByStatus(pj);
+      await saveTable('xlsx', 'informe_mantenimiento', Object.fromEntries(Object.entries(REP).map(([k, [t, h]]) => [t, [h, ...r[k]]]))); }, e.target); } };
 }
 
 // ============================================================ ADMINISTRACIÓN
