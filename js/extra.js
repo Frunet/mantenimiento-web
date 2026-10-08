@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.6';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.7';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -53,21 +53,23 @@ async function viewEquipoForm(id) {
 
 // ============================================================ PREVENTIVO (tabla de proyectos)
 // Cuatro columnas de texto libre: Proyecto · Estado · Fecha prevista · Observaciones.
+// Estados de los proyectos: los mismos nombres y colores que las incidencias.
+const PSTATES = [['Pendiente', 'st-PENDIENTE'], ['Asignada', 'st-ASIGNADA'], ['En proceso', 'st-EN_PROCESO'], ['Pendiente de actuación', 'st-PENDIENTE_ACTUACION'], ['Finalizada', 'st-RESUELTA']];
+const stateCell = s => { const m = PSTATES.find(([n]) => n.toLowerCase() === String(s).trim().toLowerCase()); return m ? `<span class="pill ${m[1]}">${esc(m[0])}</span>` : esc(s); };
 async function viewPreventivo() {
   need(staff()); const rows = await rpc('list_projects');
   const badge = r => r.days_left == null ? '' : r.days_left < 0 ? `<br><span class="pill urg-CRITICA">Vencido hace ${-r.days_left} d</span>` : r.days_left <= 3 ? `<br><span class="pill urg-ALTA">${r.days_left === 0 ? 'Vence hoy' : 'Vence en ' + r.days_left + ' d'}</span>` : '';
   return shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo proyecto</a></div>
   <p class="muted">Pulsa una fila para editarla o eliminarla.</p>
   <div class="tablewrap"><table class="table tprev"><thead><tr><th>Proyecto</th><th>Estado</th><th>Fecha prevista</th><th>Observaciones</th></tr></thead><tbody>
-  ${rows.map(r => `<tr class="clickable" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong></td><td>${esc(r.status)}</td><td>${esc(r.expected_date || '')}${badge(r)}</td><td class="obs">${esc(r.observations || '')}</td></tr>`).join('')
+  ${rows.map(r => `<tr class="clickable" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong></td><td>${stateCell(r.status)}</td><td>${esc(r.expected_date || '')}${badge(r)}</td><td class="obs">${esc(r.observations || '')}</td></tr>`).join('')
     || '<tr><td colspan="4" class="center muted">Todavía no hay proyectos. Pulsa «Nuevo proyecto».</td></tr>'}</tbody></table></div>`);
 }
 async function viewProyectoForm(id) {
   need(staff()); const rows = await rpc('list_projects'), r = id ? rows.find(x => String(x.id) === String(id)) : {}; if (id && !r) throw new Error('Registro no encontrado.');
   return { html: shell(`${back('#/preventivo', 'Preventivo')}<h1>${id ? 'Editar proyecto' : 'Nuevo proyecto'}</h1><form id="fproj" class="card stack">
   <label>Proyecto<input name="project" value="${esc(r.project || '')}" required maxlength="200" placeholder="Cortadora-Empujador Rodaja"></label>
-  <label>Estado<input name="status" value="${esc(r.status || '')}" required maxlength="60" list="estados" placeholder="Iniciado"></label>
-  <datalist id="estados"><option>Pendiente</option><option>Iniciado</option><option>En curso</option><option>Pendiente de material</option><option>Finalizado</option></datalist>
+  <label>Estado<select name="status" required>${(r.status && !PSTATES.some(([n]) => n.toLowerCase() === r.status.trim().toLowerCase()) ? `<option value="${esc(r.status)}" selected>${esc(r.status)} (estado actual)</option>` : '')}${PSTATES.map(([n]) => `<option value="${n}" ${r.status && r.status.trim().toLowerCase() === n.toLowerCase() ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
   <label>Fecha prevista<input name="expected_date" value="${esc(r.expected_date || '')}" maxlength="100" placeholder="Final Octubre"></label>
   <small class="muted" style="margin-top:-.4rem">Puede ser una fecha («15/11/2026») o un texto aproximado («Final Octubre»). Si se reconoce una fecha o un mes, se avisa cuando se acerca o vence.</small>
   <label>Observaciones<textarea name="observations" rows="5" maxlength="4000" placeholder="Solicitado Nylon y cuchillas para su posterior cambio.">${esc(r.observations || '')}</textarea></label>
