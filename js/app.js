@@ -1,0 +1,392 @@
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+const $app = document.getElementById('app');
+const S = { me: null, ref: null, channel: null, poll: null, notifs: [], seenTop: null };
+
+// ---------------------------------------------------------------- utilidades
+const URG = { CRITICA: ['🔴', 'CRÍTICA', 'Afecta a producción, seguridad o puede provocar daños importantes.'],
+  ALTA: ['🟠', 'ALTA', 'Afecta considerablemente al funcionamiento y necesita atención rápida.'],
+  MEDIA: ['🟡', 'MEDIA', 'Afecta al funcionamiento pero se puede continuar trabajando.'],
+  BAJA: ['🟢', 'BAJA', 'Problema menor que puede solucionarse cuando haya disponibilidad.'] };
+const STATUS = { PENDIENTE: 'Pendiente', ASIGNADA: 'Asignada', EN_PROCESO: 'En proceso', PENDIENTE_MATERIAL: 'Pendiente de material',
+  RESUELTA: 'Resuelta', CERRADA: 'Cerrada', CANCELADA: 'Cancelada' };
+const OPEN = ['PENDIENTE', 'ASIGNADA', 'EN_PROCESO', 'PENDIENTE_MATERIAL'];
+const TZ = 'Europe/Madrid';
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = v => (v === '' || v == null ? null : Number(v));
+const fmtDT = v => v ? new Date(v).toLocaleString('es-ES', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '') : '—';
+const fmtMin = m => { if (m == null) return '—'; const h = Math.floor(m / 60), mm = m % 60; return h ? `${h} h ${String(mm).padStart(2, '0')} min` : `${mm} min`; };
+const since = (a, b) => { if (!a) return '—'; const m = Math.max(0, Math.floor(((b ? new Date(b) : new Date()) - new Date(a)) / 60000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m % 60} min` : `${m} min`; };
+const toLocalInput = v => { if (!v) return ''; const d = new Date(v), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fromLocalInput = v => v ? new Date(v).toISOString() : null;
+const urgPill = u => `<span class="pill urg-${u}">${URG[u][0]} ${URG[u][1]}</span>`;
+const stPill = s => `<span class="pill st-${s}">${STATUS[s]}</span>`;
+const loc = i => [i.zone_name, i.line_name, i.inst_name].filter(Boolean).join(' · ') || '—';
+const slug = u => u.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+const staff = () => S.me && ['MANTENIMIENTO', 'ADMIN'].includes(S.me.role);
+
+async function rpc(name, args = {}) {
+  const { data, error } = await sb.rpc(name, args);
+  if (error) throw new Error(error.message);
+  return data;
+}
+function flash(msg, kind = 'ok') {
+  const el = document.createElement('div'); el.className = `flash flash-${kind}`; el.textContent = msg;
+  const box = document.getElementById('flashbox'); if (box) { box.prepend(el); setTimeout(() => el.remove(), 6000); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+}
+async function guard(fn, btn) {
+  if (btn) btn.disabled = true;
+  try { return await fn(); } catch (e) { flash(e.message || String(e), 'error'); } finally { if (btn) btn.disabled = false; }
+}
+
+// Reduce fotos (máx. 1600 px, JPEG) antes de subirlas
+function compressImage(file, max = 1600, quality = 0.82) {
+  return new Promise(resolve => {
+    if (!file.type.startsWith('image/') || file.type === 'image/gif') return resolve(file);
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      if (k === 1 && file.size < 600 * 1024) { URL.revokeObjectURL(url); return resolve(file); }
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(b => { URL.revokeObjectURL(url); resolve(b && b.size < file.size ? new File([b], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file); }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+async function uploadPhotos(incidentId, files) {
+  const paths = [];
+  for (const f of files) {
+    const ext = (f.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const path = `${incidentId}/${crypto.randomUUID()}.${ext}`;
+    const { error } = await sb.storage.from('incident-photos').upload(path, f, { contentType: f.type, upsert: false });
+    if (error) throw new Error('No se pudo subir una foto: ' + error.message);
+    paths.push(path);
+  }
+  return paths;
+}
+async function signedUrls(photos) {
+  if (!photos.length) return {};
+  const { data } = await sb.storage.from('incident-photos').createSignedUrls(photos.map(p => p.path), 3600);
+  const m = {}; (data || []).forEach(d => { if (d.signedUrl) m[d.path] = d.signedUrl; }); return m;
+}
+
+// ---------------------------------------------------------------- estructura (barra superior)
+function shell(inner) {
+  const me = S.me, isAdmin = me.role === 'ADMIN';
+  return `
+<header class="topbar">
+  <a class="brand" href="#/">🔧 <span>${esc(S.ref.company || 'Mantenimiento')}</span></a>
+  <nav class="nav" id="nav">
+    <a href="#/">Inicio</a><a href="#/incidencias">Incidencias</a>
+    ${isAdmin ? '' : ''}
+  </nav>
+  <div class="topright">
+    <button class="bell" id="bell" type="button" aria-label="Alertas">🔔<span class="badge" id="bell-count" hidden>0</span></button>
+    <button class="burger" id="burger" type="button" aria-label="Menú">☰</button>
+  </div>
+  <div class="alertpanel" id="alertpanel" hidden></div>
+</header>
+<div class="alertbanner" id="alertbanner" hidden></div>
+<main class="container"><div id="flashbox"></div>${inner}</main>
+<footer class="foot">${esc(me.full_name)} · ${esc(me.area_name || me.role)} · <a href="#/cuenta">Mi cuenta</a> · <button class="linkbtn" id="logout">Salir</button></footer>`;
+}
+function wireShell() {
+  document.getElementById('burger').onclick = () => document.getElementById('nav').classList.toggle('open');
+  document.getElementById('logout').onclick = async () => { await sb.auth.signOut(); };
+  const bell = document.getElementById('bell'), panel = document.getElementById('alertpanel');
+  bell.onclick = e => { e.stopPropagation(); panel.hidden = !panel.hidden; renderBell(); };
+  document.addEventListener('click', e => { if (panel && !panel.contains(e.target) && e.target !== bell) panel.hidden = true; }, { once: false });
+  panel.onclick = async e => {
+    if (e.target.id === 'markall') { e.preventDefault(); await rpc('mark_notifications_read'); S.notifs = []; S.banner = null; renderBell(); paintBanner(); return; }
+    const a = e.target.closest('a[data-id]');
+    if (a) { e.preventDefault(); await rpc('mark_notifications_read', { p_id: Number(a.dataset.id) }); S.notifs = S.notifs.filter(n => n.id != a.dataset.id); S.banner = null; paintBanner(); panel.hidden = true; location.hash = a.getAttribute('href'); }
+  };
+  renderBell(); paintBanner();
+}
+function renderBell() {
+  const c = document.getElementById('bell-count'), panel = document.getElementById('alertpanel'); if (!c) return;
+  c.hidden = !S.notifs.length; c.textContent = S.notifs.length;
+  if (!panel.hidden) {
+    panel.innerHTML = `<div class="head"><span>Alertas</span><a href="#" id="markall" style="padding:0;border:0">Marcar leídas</a></div>` +
+      (S.notifs.length ? S.notifs.map(n => `<a href="#/incidencia/${n.incident_id}" data-id="${n.id}">${n.urgency ? `<b>${esc(URG[n.urgency][1])}</b> · ` : ''}${esc(n.message)}<br><small>${esc(fmtDT(n.created_at))}</small></a>`).join('')
+        : '<div class="empty muted">No hay alertas nuevas.</div>');
+  }
+}
+let audio;
+function beep() { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); const o = audio.createOscillator(), g = audio.createGain();
+  o.connect(g); g.connect(audio.destination); o.frequency.value = 880; g.gain.value = 0.08; o.start(); o.stop(audio.currentTime + 0.25); } catch { /* bloqueado hasta interacción */ } }
+function paintBanner() {
+  const b = document.getElementById('alertbanner'), n = S.banner;
+  if (!b) return; if (!n || !staff() || !S.notifs.some(x => x.id === n.id)) { b.hidden = true; return; }
+  b.className = 'alertbanner u-' + (n.urgency || 'CRITICA'); b.textContent = '🔔 ' + n.message + (S.notifs.length > 1 ? `  (+${S.notifs.length - 1} más)` : ''); b.hidden = false;
+  b.onclick = () => { S.banner = null; b.hidden = true; location.hash = `#/incidencia/${n.incident_id}`; };
+}
+function showBanner(n) {
+  if (!staff()) return; S.banner = n; paintBanner(); beep();
+  const bell = document.getElementById('bell'); if (bell) { bell.classList.remove('ring'); void bell.offsetWidth; bell.classList.add('ring'); }
+}
+async function loadNotifs(first = false) {
+  const { data } = await sb.from('notifications').select('*').is('read_at', null).order('id', { ascending: false }).limit(20);
+  if (!data) return; S.notifs = data;
+  if (data.length && data[0].id !== S.seenTop && (!first || sessionStorage.getItem('seen') !== String(data[0].id))) { showBanner(data[0]); sessionStorage.setItem('seen', String(data[0].id)); }
+  S.seenTop = data[0]?.id ?? null; renderBell();
+}
+function startRealtime() {
+  stopRealtime();
+  S.channel = sb.channel('notif-' + S.me.id).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${S.me.id}` }, () => { loadNotifs(); if (/^#\/?$/.test(location.hash) || location.hash === '') route(); }).subscribe();
+  S.poll = setInterval(() => loadNotifs(), 30000); loadNotifs(true);
+}
+function stopRealtime() { if (S.channel) { sb.removeChannel(S.channel); S.channel = null; } clearInterval(S.poll); }
+
+// ---------------------------------------------------------------- tarjetas
+function card(i, showTech = true) {
+  return `<a class="card inc urgb-${i.urgency}" href="#/incidencia/${i.id}">
+  <div class="row between"><strong class="num">${esc(i.number)}</strong><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
+  <p class="desc">${esc(i.description.length > 140 ? i.description.slice(0, 137) + '…' : i.description)}</p>
+  <div class="meta"><span>🏭 ${esc(i.area_name)}</span><span>📍 ${esc(loc(i))}</span>${i.equip_name ? `<span>⚙️ ${esc(i.equip_name)}</span>` : ''}
+  <span>🕒 ${fmtDT(i.created_at)}${OPEN.includes(i.status) ? ' · hace ' + since(i.created_at) : ''}</span>
+  ${showTech ? `<span>👷 ${esc(i.tech_name || 'Sin asignar')}</span>` : ''}${i.n_photos > 0 ? `<span>📷 ${i.n_photos}</span>` : ''}</div></a>`;
+}
+
+// ---------------------------------------------------------------- vistas
+async function viewHome(q) {
+  if (S.me.role === 'ENCARGADO') {
+    const rows = await rpc('list_incidents', { p_filters: { order: 'recientes' }, p_limit: 60 });
+    const ab = rows.filter(r => OPEN.includes(r.status)).length, rs = rows.filter(r => r.status === 'RESUELTA').length;
+    return shell(`<a class="btn-new" href="#/nueva">＋ NUEVA INCIDENCIA</a>
+      <div class="row between wrap"><h2>MIS INCIDENCIAS <small class="muted">· ${esc(S.me.area_name)}</small></h2><span class="muted">${ab} abiertas · ${rs} resueltas</span></div>
+      ${rows.map(r => card(r)).join('') || '<div class="card center muted">Todavía no hay incidencias en tu área.</div>'}`);
+  }
+  const group = ['pendientes', 'proceso', 'resueltas'].includes(q.group) ? q.group : 'pendientes';
+  const [rows, d] = await Promise.all([rpc('list_incidents', { p_filters: { group }, p_limit: 200 }), rpc('dashboard_staff')]);
+  const t = (k, ic, lb) => `<div class="tile t-${k}"><b>${d.by_urg[k] || 0}</b><span>${ic} ${lb}</span></div>`;
+  return shell(`<div class="row between wrap"><h1>Panel de mantenimiento</h1><a class="btn btn-primary" href="#/nueva">＋ Nueva incidencia</a></div>
+    <div class="tiles">${t('CRITICA', '🔴', 'Críticas sin resolver')}${t('ALTA', '🟠', 'Alta urgencia')}${t('MEDIA', '🟡', 'Medias')}${t('BAJA', '🟢', 'Bajas')}</div>
+    <div class="tiles tiles-sm"><div class="tile"><b>${d.pendientes}</b><span>Pendientes</span></div><div class="tile"><b>${d.proceso}</b><span>En proceso</span></div>
+    <div class="tile"><b>${d.hoy}</b><span>Resueltas hoy</span></div><div class="tile"><b>${fmtMin(d.avg_res_min)}</b><span>Tiempo medio resolución</span></div></div>
+    <div class="tabs">${[['pendientes', 'INCIDENCIAS PENDIENTES'], ['proceso', 'EN PROCESO'], ['resueltas', 'RESUELTAS']].map(([k, l]) => `<a class="${group === k ? 'on' : ''}" href="#/?group=${k}">${l}</a>`).join('')}</div>
+    ${rows.map(r => card(r)).join('') || '<div class="card center muted">No hay incidencias en esta lista. 🎉</div>'}`);
+}
+
+async function viewList(q) {
+  const R = S.ref, f = q;
+  const rows = await rpc('list_incidents', { p_filters: f, p_limit: 500 });
+  const opt = (arr, val, label, all = 'Todos') => `<option value="">${all}</option>` + arr.map(x => `<option value="${esc(x[val])}" ${String(f[curKey]) === String(x[val]) ? 'selected' : ''}>${esc(label(x))}</option>`).join('');
+  let curKey = '';
+  const sel = (key, name, arr, val, label, all) => { curKey = key; return `<label>${name}<select name="${key}">${opt(arr, val, label, all)}</select></label>`; };
+  return shell(`<div class="row between wrap"><h1>Incidencias <small class="muted">(${rows.length})</small></h1></div>
+  <details class="card filters" ${Object.keys(q).length ? 'open' : ''}><summary>🔎 Buscar y filtrar</summary>
+  <form id="ffilter" class="grid-form">
+    <label>Número / texto<input name="q" value="${esc(f.q || '')}" placeholder="INC-2026-…"></label>
+    <label>Desde<input type="date" name="date_from" value="${esc(f.date_from || '')}"></label>
+    <label>Hasta<input type="date" name="date_to" value="${esc(f.date_to || '')}"></label>
+    ${S.me.role !== 'ENCARGADO' ? sel('area', 'Área', R.areas, 'id', x => x.name, 'Todas') : ''}
+    ${sel('user', 'Usuario', R.users, 'id', x => x.full_name, 'Todos')}
+    ${sel('status', 'Estado', Object.entries(STATUS).map(([k, v]) => ({ k, v })), 'k', x => x.v, 'Todos')}
+    ${sel('urgency', 'Urgencia', Object.entries(URG).map(([k, v]) => ({ k, v })), 'k', x => x.v[0] + ' ' + x.v[1], 'Todas')}
+    ${staff() ? sel('tech', 'Técnico', R.techs, 'id', x => x.full_name, 'Todos') : ''}
+    ${sel('location', 'Ubicación', R.locations, 'id', x => x.kind[0] + x.kind.slice(1).toLowerCase() + ': ' + x.name, 'Todas')}
+    ${sel('equipment', 'Máquina / equipo', R.equipment, 'id', x => x.name, 'Todos')}
+    ${sel('category', 'Categoría', R.categories, 'id', x => x.name, 'Todas')}
+    <div class="row gap actions"><button class="btn btn-primary" type="submit">Filtrar</button><a class="btn" href="#/incidencias">Limpiar</a></div>
+  </form></details>
+  <div class="tablewrap"><table class="table desktop-only"><thead><tr><th>Número</th><th>Fecha</th><th>Área</th><th>Ubicación / equipo</th><th>Descripción</th><th>Urgencia</th><th>Estado</th><th>Responsable</th></tr></thead><tbody>
+  ${rows.map(i => `<tr class="clickable" onclick="location.hash='#/incidencia/${i.id}'"><td><a href="#/incidencia/${i.id}"><strong>${esc(i.number)}</strong></a></td><td>${fmtDT(i.created_at)}</td><td>${esc(i.area_name)}</td>
+  <td>${esc(loc(i))}${i.equip_name ? `<br><small class="muted">${esc(i.equip_name)}</small>` : ''}</td><td>${esc(i.description.slice(0, 70))}</td><td>${urgPill(i.urgency)}</td><td>${stPill(i.status)}</td><td>${esc(i.tech_name || '—')}</td></tr>`).join('') || '<tr><td colspan="8" class="center muted">Sin resultados.</td></tr>'}</tbody></table></div>
+  <div class="mobile-only">${rows.map(r => card(r)).join('') || '<div class="card center muted">Sin resultados.</div>'}</div>`);
+}
+function wireList() {
+  document.getElementById('ffilter').onsubmit = e => { e.preventDefault(); const p = new URLSearchParams();
+    new FormData(e.target).forEach((v, k) => { if (v) p.set(k, v); }); location.hash = '#/incidencias' + (p.toString() ? '?' + p : ''); };
+}
+
+// ---- nueva incidencia
+function viewNew() {
+  const R = S.ref, enc = S.me.role === 'ENCARGADO';
+  const sel = (name, kind) => `<label>${{ zone_id: 'Zona', line_id: 'Línea', installation_id: 'Instalación' }[name]}<select name="${name}"><option value="">—</option>${R.locations.filter(l => l.kind === kind).map(l => `<option value="${l.id}" data-area="${l.area_id ?? ''}">${esc(l.name)}</option>`).join('')}</select></label>`;
+  return shell(`<h1>Nueva incidencia</h1><form id="fnew" class="stack" novalidate>
+  <div class="card stack">${enc ? `<div class="fixed-area">🏭 Área: <strong>${esc(S.me.area_name)}</strong></div><input type="hidden" name="area_id" value="${S.me.area_id}">`
+    : `<label>Área<select name="area_id" id="area_id">${R.areas.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>`}
+    <div class="grid-form">${sel('zone_id', 'ZONA')}${sel('line_id', 'LINEA')}
+    <label>Máquina / equipo<select name="equipment_id"><option value="">—</option>${R.equipment.map(e => `<option value="${e.id}" data-area="${e.area_id ?? ''}">${esc(e.name)}</option>`).join('')}</select></label>
+    ${sel('installation_id', 'INSTALACION')}</div></div>
+  <div class="card stack"><label for="description"><strong>¿Qué ocurre?</strong></label>
+    <textarea name="description" id="description" rows="5" required minlength="5" placeholder="Ej.: El motor de la cinta transportadora de la línea 2 hace un ruido extraño y se ha parado."></textarea></div>
+  <div class="card stack"><strong>Urgencia</strong><div class="urgency-pick">
+    ${Object.entries(URG).map(([k, [ic, l, d]]) => `<label class="urg-opt urg-${k}"><input type="radio" name="urgency" value="${k}" required><span class="urg-box"><span class="urg-ic">${ic}</span><b>${l}</b><small>${d}</small></span></label>`).join('')}</div></div>
+  <div class="card stack"><strong>Fotografías</strong><div class="row gap wrap"><button type="button" class="btn btn-photo" id="btn-camera">📷 AÑADIR FOTO</button><button type="button" class="btn" id="btn-gallery">🖼 Elegir de la galería</button></div>
+    <input type="file" id="in-camera" accept="image/*" capture="environment" hidden><input type="file" id="in-gallery" accept="image/*" multiple hidden><div class="previews" id="previews"></div></div>
+  <details class="card"><summary>Tipo de avería (opcional)</summary><label>Categoría<select name="category_id"><option value="">—</option>${R.categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></details>
+  <button class="btn btn-send" type="submit" id="send">ENVIAR INCIDENCIA</button></form>`);
+}
+function wireNew() {
+  const files = []; let busy = false; const prev = document.getElementById('previews'), form = document.getElementById('fnew');
+  const sync = () => { prev.innerHTML = ''; files.forEach((f, i) => { const d = document.createElement('div'); d.className = 'pv'; const img = document.createElement('img'); img.src = URL.createObjectURL(f); img.alt = 'Vista previa';
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = '×'; b.setAttribute('aria-label', 'Quitar foto'); b.onclick = () => { files.splice(i, 1); sync(); }; d.append(img, b); prev.append(d); }); };
+  const add = async list => { busy = true; for (const f of list) if (files.length < 10 && f.type.startsWith('image/')) files.push(await compressImage(f)); sync(); busy = false; };
+  const cam = document.getElementById('in-camera'), gal = document.getElementById('in-gallery');
+  document.getElementById('btn-camera').onclick = () => cam.click(); document.getElementById('btn-gallery').onclick = () => gal.click();
+  cam.onchange = () => { const l = [...cam.files]; cam.value = ''; add(l); }; gal.onchange = () => { const l = [...gal.files]; gal.value = ''; add(l); };
+  const area = document.getElementById('area_id');
+  const byArea = () => { if (!area) return; form.querySelectorAll('option[data-area]').forEach(o => { const ok = !o.dataset.area || o.dataset.area === area.value; o.hidden = !ok; o.disabled = !ok; if (!ok && o.selected) o.parentElement.value = ''; }); };
+  if (area) { area.onchange = byArea; byArea(); }
+  form.onsubmit = async e => {
+    e.preventDefault(); if (busy) return;
+    const f = new FormData(form), btn = document.getElementById('send');
+    if (!f.get('urgency')) return alert('Selecciona la urgencia.');
+    if ((f.get('description') || '').trim().length < 5) { form.description.focus(); return alert('Describe qué ocurre.'); }
+    btn.disabled = true; btn.textContent = 'Enviando…';
+    try {
+      const res = await rpc('create_incident', { p_area: num(f.get('area_id')), p_zone: num(f.get('zone_id')), p_line: num(f.get('line_id')), p_inst: num(f.get('installation_id')),
+        p_equip: num(f.get('equipment_id')), p_cat: num(f.get('category_id')), p_desc: f.get('description'), p_urgency: f.get('urgency') });
+      let warn = '';
+      if (files.length) { try { await rpc('register_photos', { p_id: res.id, p_kind: 'INCIDENCIA', p_paths: await uploadPhotos(res.id, files) }); }
+        catch (err) { warn = ' Atención: ' + err.message; } }
+      sessionStorage.setItem('flash', JSON.stringify(['Incidencia enviada correctamente. Número: ' + res.number + warn, warn ? 'info' : 'ok']));
+      location.hash = '#/incidencia/' + res.id;
+    } catch (err) { flash(err.message, 'error'); btn.disabled = false; btn.textContent = 'ENVIAR INCIDENCIA'; }
+  };
+}
+
+// ---- ficha
+let currentDetail = null;
+async function viewDetail(id) {
+  const d = await rpc('incident_detail', { p_id: Number(id) }); currentDetail = d;
+  const i = d.incident, a = d.action, isStaff = staff(), edit = d.can_edit, urls = await signedUrls(d.photos);
+  const gal = kind => d.photos.filter(p => p.kind === kind).map(p => urls[p.path] ? `<a href="${esc(urls[p.path])}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(urls[p.path])}" alt="Foto"></a>` : '').join('');
+  const costed = d.materials.filter(m => m.unit_cost != null), total = costed.reduce((s, m) => s + m.quantity * m.unit_cost, 0);
+  const R = S.ref, admin = S.me.role === 'ADMIN';
+  const mm = a && a.minutes_spent != null ? a.minutes_spent : null;
+  return shell(`<a class="back" href="#/">← Volver</a>
+  <div class="row between wrap"><h1>${esc(i.number)}</h1><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
+  <section class="card"><h2>Información de la incidencia</h2><dl class="info">
+    <dt>Fecha y hora</dt><dd>${fmtDT(i.created_at)}</dd><dt>Comunicada por</dt><dd>${esc(i.creator_name)}</dd><dt>Área</dt><dd>${esc(i.area_name)}</dd>
+    <dt>Ubicación</dt><dd>${esc(loc(i))}</dd><dt>Máquina / equipo</dt><dd>${esc(i.equip_name || '—')}</dd><dt>Categoría</dt><dd>${esc(i.category_name || '—')}</dd>
+    <dt>Responsable</dt><dd>${esc(i.tech_name || 'Sin asignar')}</dd>${OPEN.includes(i.status) ? `<dt>Abierta desde</dt><dd>hace ${since(i.created_at)}</dd>` : ''}
+    ${i.resolved_at ? `<dt>Resuelta</dt><dd>${fmtDT(i.resolved_at)}</dd>` : ''}${i.closed_at ? `<dt>Cerrada</dt><dd>${fmtDT(i.closed_at)}</dd>` : ''}</dl>
+    <p class="descbox">${esc(i.description)}</p><div class="gallery">${gal('INCIDENCIA')}</div></section>
+  ${isStaff && d.transitions.length ? `<section class="card"><h2>Gestión</h2><div class="row gap wrap" id="gestion">
+    ${OPEN.includes(i.status) && i.assigned_to !== S.me.id && S.me.role === 'MANTENIMIENTO' ? '<button class="btn btn-primary" data-assign="me">🙋 Asignármela</button>' : ''}
+    ${d.transitions.map(t => `<button class="btn ${['RESUELTA', 'CERRADA'].includes(t) ? 'btn-ok' : ''} ${t === 'CANCELADA' ? 'btn-danger' : ''}" data-status="${t}">${t === 'REABRIR' ? '↩ Reabrir' : '→ ' + STATUS[t]}</button>`).join('')}</div>
+    ${admin && OPEN.includes(i.status) ? `<div class="row gap" style="margin-top:.75rem"><select id="adm-tech">${R.techs.map(t => `<option value="${t.id}" ${i.assigned_to === t.id ? 'selected' : ''}>${esc(t.full_name)}</option>`).join('')}</select><button class="btn" data-assign="sel">Asignar técnico</button></div>` : ''}</section>` : ''}
+  ${isStaff && edit ? `<section class="card"><h2>Actuación de mantenimiento</h2><form id="faction" class="stack"><div class="grid-form">
+    ${admin ? `<label>Técnico responsable<select name="tech"><option value="">—</option>${R.techs.map(t => `<option value="${t.id}" ${i.assigned_to === t.id ? 'selected' : ''}>${esc(t.full_name)}</option>`).join('')}</select></label>`
+      : `<label>Técnico responsable<input value="${esc(i.tech_name || S.me.full_name)}" disabled></label>`}
+    <label>Inicio<input type="datetime-local" name="started" id="started_at" value="${toLocalInput(a?.started_at)}"></label>
+    <label>Fin<input type="datetime-local" name="finished" id="finished_at" value="${toLocalInput(a?.finished_at)}"></label>
+    <div class="timebox"><span>Tiempo empleado</span><div class="row gap"><label class="inline">Horas<input type="number" min="0" name="hours" id="hours" value="${mm != null ? Math.floor(mm / 60) : ''}"></label>
+    <label class="inline">Min<input type="number" min="0" max="59" name="minutes" id="minutes" value="${mm != null ? mm % 60 : ''}"></label></div><small class="muted">Si lo dejas vacío se calcula con inicio y fin.</small></div>
+    <label>Categoría<select name="category"><option value="">—</option>${R.categories.map(c => `<option value="${c.id}" ${i.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+    <label>Coste del material (€, opcional)<input name="cost" inputmode="decimal" value="${a?.material_cost ?? ''}"></label></div>
+    <label>Trabajo realizado<textarea name="work" rows="4" placeholder="Ej.: Se desmontó el motor, se detectó desgaste del rodamiento y se sustituyó.">${esc(a?.work_done || '')}</textarea></label>
+    <label>Observaciones<textarea name="obs" rows="2">${esc(a?.observations || '')}</textarea></label><button class="btn btn-primary">💾 Guardar actuación</button></form></section>`
+  : a && (a.work_done || a.started_at || a.minutes_spent != null) ? `<section class="card"><h2>Actuación de mantenimiento</h2><dl class="info"><dt>Técnico</dt><dd>${esc(a.tech_name || i.tech_name || '—')}</dd>
+    <dt>Inicio</dt><dd>${fmtDT(a.started_at)}</dd><dt>Fin</dt><dd>${fmtDT(a.finished_at)}</dd><dt>Tiempo empleado</dt><dd>${fmtMin(a.minutes_spent)}</dd></dl>
+    ${a.work_done ? `<h3>Solución aplicada</h3><p class="descbox">${esc(a.work_done)}</p>` : ''}${a.observations ? `<h3>Observaciones</h3><p class="descbox">${esc(a.observations)}</p>` : ''}</section>` : ''}
+  ${d.materials.length || (isStaff && edit) ? `<section class="card" id="materiales"><h2>Materiales utilizados</h2>
+    ${d.materials.length ? `<div class="tablewrap"><table class="table"><thead><tr><th>Material</th><th>Cantidad</th><th>Unidad</th><th>Observaciones</th>${isStaff ? '<th>€/ud</th><th>Importe</th>' : ''}${isStaff && edit ? '<th></th>' : ''}</tr></thead><tbody>
+    ${d.materials.map(m => `<tr><td>${esc(m.name)}</td><td>${+m.quantity}</td><td>${esc(m.unit)}</td><td>${esc(m.notes || '')}</td>${isStaff ? `<td>${m.unit_cost != null ? (+m.unit_cost).toFixed(2) : '—'}</td><td>${m.unit_cost != null ? (m.quantity * m.unit_cost).toFixed(2) + ' €' : '—'}</td>` : ''}
+    ${isStaff && edit ? `<td><button class="linkbtn" data-delmat="${m.id}">✕</button></td>` : ''}</tr>`).join('')}</tbody></table></div>${isStaff && costed.length ? `<p><strong>Coste total del material: ${total.toFixed(2)} €</strong></p>` : ''}` : '<p class="muted">Sin materiales registrados.</p>'}
+    ${isStaff && edit ? `<form id="fmat" class="grid-form mat-form"><label>Material<input name="name" id="mat-name" list="catalog" autocomplete="off" required placeholder="Rodamiento 6204"></label>
+    <label>Cantidad<input name="qty" inputmode="decimal" value="1" required></label><label>Unidad<input name="unit" id="mat-unit" value="Ud" list="units"></label>
+    <label>Coste unitario € (opcional)<input name="cost" id="mat-cost" inputmode="decimal"></label><label>Observaciones<input name="notes" placeholder="Sustitución"></label>
+    <datalist id="catalog">${R.catalog.map(c => `<option value="${esc(c.name)}" data-unit="${esc(c.unit)}" data-cost="${c.unit_cost ?? ''}">`).join('')}</datalist>
+    <datalist id="units"><option>Ud</option><option>m</option><option>kg</option><option>l</option><option>Caja</option></datalist><button class="btn">＋ Añadir material</button></form>` : ''}</section>` : ''}
+  ${gal('REPARACION') || (isStaff && edit) ? `<section class="card"><h2>Fotografías de la reparación</h2><div class="gallery">${gal('REPARACION')}</div>
+    ${isStaff && edit ? '<form id="frep" class="row gap wrap"><input type="file" name="photos" accept="image/*" multiple required><button class="btn">📷 Subir fotos</button></form>' : ''}</section>` : ''}
+  <section class="card"><h2>Historial</h2><ul class="timeline">${d.history.map(h => `<li><time>${fmtDT(h.created_at)}</time> — ${esc(h.detail || h.action)}${h.user && h.action !== 'CREADA' ? ` <small class="muted">· ${esc(h.user)}</small>` : ''}</li>`).join('')}</ul></section>`);
+}
+function wireDetail(id) {
+  const act = (fn, btn) => guard(async () => { await fn(); await route(); }, btn);
+  document.querySelectorAll('[data-assign]').forEach(b => b.onclick = () => act(async () => { const r = await rpc('assign_incident', { p_id: Number(id), p_tech: b.dataset.assign === 'sel' ? document.getElementById('adm-tech').value : null });
+    sessionStorage.setItem('flash', JSON.stringify([r.changed ? 'Incidencia asignada.' : 'La incidencia ya estaba asignada a esa persona.', r.changed ? 'ok' : 'info'])); }, b));
+  document.querySelectorAll('[data-status]').forEach(b => b.onclick = () => {
+    if (b.dataset.status === 'CANCELADA' && !confirm('¿Cancelar la incidencia?')) return;
+    act(async () => { const r = await rpc('change_status', { p_id: Number(id), p_status: b.dataset.status }); sessionStorage.setItem('flash', JSON.stringify(['Estado: ' + STATUS[r.status] + '.', 'ok'])); }, b); });
+  const fa = document.getElementById('faction');
+  if (fa) {
+    fa.onsubmit = e => { e.preventDefault(); const f = new FormData(fa);
+      act(async () => { await rpc('save_action', { p_id: Number(id), p_tech: f.get('tech') || null, p_started: fromLocalInput(f.get('started')), p_finished: fromLocalInput(f.get('finished')),
+        p_hours: num(f.get('hours')), p_minutes: num(f.get('minutes')), p_work: f.get('work'), p_obs: f.get('obs'), p_cost: num((f.get('cost') || '').replace(',', '.')), p_category: num(f.get('category')) });
+        sessionStorage.setItem('flash', JSON.stringify(['Actuación guardada.', 'ok'])); }, fa.querySelector('button')); };
+    const s = document.getElementById('started_at'), fi = document.getElementById('finished_at'), h = document.getElementById('hours'), m = document.getElementById('minutes'); let manual = false;
+    [h, m].forEach(x => x.addEventListener('input', () => manual = true));
+    const calc = () => { if (!s.value || !fi.value || manual) return; const mins = Math.max(0, Math.round((new Date(fi.value) - new Date(s.value)) / 60000)); h.value = Math.floor(mins / 60); m.value = mins % 60; };
+    s.onchange = calc; fi.onchange = calc;
+  }
+  const mn = document.getElementById('mat-name');
+  if (mn) mn.onchange = () => { const o = [...document.querySelectorAll('#catalog option')].find(x => x.value.toLowerCase() === mn.value.trim().toLowerCase()); if (o) { document.getElementById('mat-unit').value = o.dataset.unit || 'Ud'; document.getElementById('mat-cost').value = o.dataset.cost || ''; } };
+  const fm = document.getElementById('fmat');
+  if (fm) fm.onsubmit = e => { e.preventDefault(); const f = new FormData(fm);
+    act(async () => { await rpc('add_material', { p_id: Number(id), p_name: f.get('name'), p_qty: num((f.get('qty') || '').replace(',', '.')), p_unit: f.get('unit'), p_notes: f.get('notes'), p_unit_cost: num((f.get('cost') || '').replace(',', '.')) });
+      sessionStorage.setItem('flash', JSON.stringify(['Material añadido.', 'ok'])); }, fm.querySelector('button')); };
+  document.querySelectorAll('[data-delmat]').forEach(b => b.onclick = () => { if (confirm('¿Quitar este material?')) act(() => rpc('delete_material', { p_id: Number(id), p_mid: Number(b.dataset.delmat) }), b); });
+  const fr = document.getElementById('frep');
+  if (fr) fr.onsubmit = e => { e.preventDefault(); const inp = fr.querySelector('input[type=file]');
+    act(async () => { const fs = []; for (const f of inp.files) fs.push(await compressImage(f)); await rpc('register_photos', { p_id: Number(id), p_kind: 'REPARACION', p_paths: await uploadPhotos(id, fs) });
+      sessionStorage.setItem('flash', JSON.stringify([fs.length + ' foto(s) añadida(s).', 'ok'])); }, fr.querySelector('button')); };
+}
+
+// ---- cuenta
+function viewAccount() {
+  return shell(`<h1>Mi cuenta</h1><div class="card"><p><strong>${esc(S.me.full_name)}</strong> · usuario <code>${esc(S.me.username)}</code> · ${esc(S.me.area_name || S.me.role)}</p>
+  <h2>Cambiar contraseña</h2><form id="fpass" class="stack"><label>Contraseña actual<input type="password" name="cur" autocomplete="current-password" required></label>
+  <label>Nueva contraseña (mín. 8 caracteres)<input type="password" name="new" autocomplete="new-password" minlength="8" required></label>
+  <label>Repetir nueva contraseña<input type="password" name="rep" autocomplete="new-password" minlength="8" required></label><button class="btn btn-primary">Guardar</button></form></div>`);
+}
+function wireAccount() {
+  const f = document.getElementById('fpass');
+  f.onsubmit = e => { e.preventDefault(); const d = new FormData(f); guard(async () => {
+    if (d.get('new').length < 8) throw new Error('La nueva contraseña debe tener al menos 8 caracteres.');
+    if (d.get('new') !== d.get('rep')) throw new Error('Las contraseñas no coinciden.');
+    const { error: e1 } = await sb.auth.signInWithPassword({ email: `${slug(S.me.username)}@${LOGIN_DOMAIN}`, password: d.get('cur') });
+    if (e1) throw new Error('La contraseña actual no es correcta.');
+    const { error } = await sb.auth.updateUser({ password: d.get('new') }); if (error) throw new Error(error.message);
+    f.reset(); flash('Contraseña actualizada.'); }, f.querySelector('button')); };
+}
+
+// ---- login
+function viewLogin() {
+  return `<main class="container"><div id="flashbox"></div><div class="login card"><h1>🔧 Mantenimiento</h1><p class="muted">Gestión de incidencias y mantenimiento</p>
+  <form id="flogin"><label>Usuario<input name="username" autocomplete="username" autocapitalize="none" required autofocus></label>
+  <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button class="btn btn-primary btn-block" type="submit">Entrar</button></form></div></main>`;
+}
+function wireLogin() {
+  const f = document.getElementById('flogin');
+  f.onsubmit = e => { e.preventDefault(); const d = new FormData(f); guard(async () => {
+    const { error } = await sb.auth.signInWithPassword({ email: `${slug(d.get('username'))}@${LOGIN_DOMAIN}`, password: d.get('password') });
+    if (error) throw new Error('Usuario o contraseña incorrectos.'); }, f.querySelector('button')); };
+}
+
+// ---------------------------------------------------------------- router
+function parseHash() {
+  const raw = location.hash.replace(/^#/, '') || '/'; const [path, qs] = raw.split('?');
+  return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) };
+}
+async function route() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { stopRealtime(); S.me = null; $app.innerHTML = viewLogin(); wireLogin(); return; }
+  try {
+    if (!S.me) { const r = await rpc('ref_data'); S.ref = r; S.me = r.me; S.ref.company = 'FRUNET'; startRealtime(); }
+  } catch (e) { await sb.auth.signOut(); $app.innerHTML = viewLogin(); wireLogin(); flash('Tu usuario no está activo.', 'error'); return; }
+  const { parts, q } = parseHash(); let html, after = () => {};
+  try {
+    if (!parts.length) html = await viewHome(q);
+    else if (parts[0] === 'incidencias') { html = await viewList(q); after = wireList; }
+    else if (parts[0] === 'nueva') { html = viewNew(); after = wireNew; }
+    else if (parts[0] === 'incidencia') { html = await viewDetail(parts[1]); after = () => wireDetail(parts[1]); }
+    else if (parts[0] === 'cuenta') { html = viewAccount(); after = wireAccount; }
+    else html = await viewHome({});
+  } catch (e) { html = shell(`<div class="card center"><h1>Error</h1><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/">Volver al inicio</a></div>`); }
+  $app.innerHTML = html; wireShell(); after(); window.scrollTo(0, 0);
+  const fl = sessionStorage.getItem('flash'); if (fl) { sessionStorage.removeItem('flash'); const [m, k] = JSON.parse(fl); flash(m, k); }
+}
+window.addEventListener('hashchange', route);
+sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') { S.me = null; S.ref = null; route(); } else if (ev === 'SIGNED_IN' && !S.me) route(); });
+route();
