@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.4';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.4';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.4';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.4';
+export const VERSION = '2026-10-08.5';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.5';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.5';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.5';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -34,7 +34,7 @@ export const toLocalInput = v => { if (!v) return ''; const d = new Date(v), p =
 export const fromLocalInput = v => v ? new Date(v).toISOString() : null;
 export const urgPill = u => `<span class="pill urg-${u}">${URG[u][0]} ${URG[u][1]}</span>`;
 export const stPill = s => `<span class="pill st-${s}">${STATUS[s]}</span>`;
-export const loc = i => [i.zone_name, i.line_name, i.inst_name].filter(Boolean).join(' · ') || '—';
+export const loc = i => i.inst_name || '—';   // las listas de Zona y Línea ya no se muestran (los datos se conservan)
 export const slug = u => u.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
 export const staff = () => S.me && ['MANTENIMIENTO', 'ADMIN'].includes(S.me.role);
 
@@ -162,7 +162,7 @@ export function card(i, showTech = true) {
   return `<a class="card inc urgb-${i.urgency}" href="#/incidencia/${i.id}">
   <div class="row between"><strong class="num">${esc(i.number)}</strong><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
   <p class="desc">${esc(i.description.length > 140 ? i.description.slice(0, 137) + '…' : i.description)}</p>
-  <div class="meta"><span>🏭 ${esc(i.area_name)}</span><span>📍 ${esc(loc(i))}</span>${i.equip_name ? `<span>⚙️ ${esc(i.equip_name)}</span>` : ''}
+  <div class="meta"><span>🏭 ${esc(i.area_name)}</span>${i.inst_name ? `<span>📍 ${esc(i.inst_name)}</span>` : ''}${i.equip_name ? `<span>⚙️ ${esc(i.equip_name)}</span>` : ''}
   <span>🕒 ${fmtDT(i.created_at)}${OPEN.includes(i.status) ? ' · hace ' + since(i.created_at) : ''}</span>${i.status === 'PENDIENTE_ACTUACION' && i.pause_reason ? `<span>🟠 ${esc(PAUSE_LABEL[i.pause_reason] || '')}</span>` : ''}
   ${showTech ? `<span>👷 ${esc(i.tech_name || 'Sin asignar')}</span>` : ''}${i.n_photos > 0 ? `<span>📷 ${i.n_photos}</span>` : ''}</div></a>`;
 }
@@ -216,12 +216,12 @@ async function viewList(q) {
     ${sel('status', 'Estado', Object.entries(STATUS).map(([k, v]) => ({ k, v })), 'k', x => x.v, 'Todos')}
     ${sel('urgency', 'Urgencia', Object.entries(URG).map(([k, v]) => ({ k, v })), 'k', x => x.v[0] + ' ' + x.v[1], 'Todas')}
     ${staff() ? sel('tech', 'Técnico', R.techs, 'id', x => x.full_name, 'Todos') : ''}
-    ${sel('location', 'Ubicación', R.locations, 'id', x => x.kind[0] + x.kind.slice(1).toLowerCase() + ': ' + x.name, 'Todas')}
+    ${sel('location', 'Instalación', R.locations.filter(x => x.kind === 'INSTALACION'), 'id', x => x.name, 'Todas')}
     ${sel('equipment', 'Máquina / equipo', R.equipment, 'id', x => x.name, 'Todos')}
     ${sel('category', 'Categoría', R.categories, 'id', x => x.name, 'Todas')}
     <div class="row gap actions"><button class="btn btn-primary" type="submit">Filtrar</button><a class="btn" href="#/incidencias">Limpiar</a></div>
   </form></details>
-  <div class="tablewrap"><table class="table desktop-only"><thead><tr><th>Número</th><th>Fecha</th><th>Área</th><th>Ubicación / equipo</th><th>Descripción</th><th>Urgencia</th><th>Estado</th><th>Responsable</th></tr></thead><tbody>
+  <div class="tablewrap"><table class="table desktop-only"><thead><tr><th>Número</th><th>Fecha</th><th>Área</th><th>Instalación / equipo</th><th>Descripción</th><th>Urgencia</th><th>Estado</th><th>Responsable</th></tr></thead><tbody>
   ${rows.map(i => `<tr class="clickable" onclick="location.hash='#/incidencia/${i.id}'"><td><a href="#/incidencia/${i.id}"><strong>${esc(i.number)}</strong></a></td><td>${fmtDT(i.created_at)}</td><td>${esc(i.area_name)}</td>
   <td>${esc(loc(i))}${i.equip_name ? `<br><small class="muted">${esc(i.equip_name)}</small>` : ''}</td><td>${esc(i.description.slice(0, 70))}</td><td>${urgPill(i.urgency)}</td><td>${stPill(i.status)}</td><td>${esc(i.tech_name || '—')}</td></tr>`).join('') || '<tr><td colspan="8" class="center muted">Sin resultados.</td></tr>'}</tbody></table></div>
   <div class="mobile-only">${rows.map(r => card(r)).join('') || '<div class="card center muted">Sin resultados.</div>'}</div>`);
@@ -235,11 +235,11 @@ function wireList() {
 // ---- nueva incidencia
 function viewNew() {
   const R = S.ref, enc = S.me.role === 'ENCARGADO';
-  const sel = (name, kind) => `<label>${{ zone_id: 'Zona', line_id: 'Línea', installation_id: 'Instalación' }[name]}<select name="${name}"><option value="">—</option>${R.locations.filter(l => l.kind === kind).map(l => `<option value="${l.id}" data-area="${l.area_id ?? ''}">${esc(l.name)}</option>`).join('')}</select></label>`;
+  const sel = (name, kind) => `<label>${{ installation_id: 'Instalación' }[name]}<select name="${name}"><option value="">—</option>${R.locations.filter(l => l.kind === kind).map(l => `<option value="${l.id}" data-area="${l.area_id ?? ''}">${esc(l.name)}</option>`).join('')}</select></label>`;
   return shell(`<h1>Nueva incidencia</h1><form id="fnew" class="stack" novalidate>
   <div class="card stack">${enc ? `<div class="fixed-area">🏭 Área: <strong>${esc(S.me.area_name)}</strong></div><input type="hidden" name="area_id" value="${S.me.area_id}">`
     : `<label>Área<select name="area_id" id="area_id">${R.areas.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>`}
-    <div class="grid-form">${sel('zone_id', 'ZONA')}${sel('line_id', 'LINEA')}
+    <div class="grid-form">
     <label>Máquina / equipo<select name="equipment_id"><option value="">—</option>${R.equipment.map(e => `<option value="${e.id}" data-area="${e.area_id ?? ''}">${esc(e.name)}</option>`).join('')}</select></label>
     ${sel('installation_id', 'INSTALACION')}</div></div>
   <div class="card stack"><label for="description"><strong>¿Qué ocurre?</strong></label>
@@ -269,7 +269,7 @@ function wireNew() {
     if ((f.get('description') || '').trim().length < 5) { form.description.focus(); return alert('Describe qué ocurre.'); }
     btn.disabled = true; btn.textContent = 'Enviando…';
     try {
-      const res = await rpc('create_incident', { p_area: num(f.get('area_id')), p_zone: num(f.get('zone_id')), p_line: num(f.get('line_id')), p_inst: num(f.get('installation_id')),
+      const res = await rpc('create_incident', { p_area: num(f.get('area_id')), p_zone: null, p_line: null, p_inst: num(f.get('installation_id')),
         p_equip: num(f.get('equipment_id')), p_cat: num(f.get('category_id')), p_desc: f.get('description'), p_urgency: f.get('urgency') });
       let warn = '';
       if (files.length) { try { await rpc('register_photos', { p_id: res.id, p_kind: 'INCIDENCIA', p_paths: await uploadPhotos(res.id, files) }); }

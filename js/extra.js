@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.4';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.5';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -22,15 +22,15 @@ export function startExtras() {
 async function viewEquipos() {
   need(isAdmin()); const rows = await rpc('list_equipment');
   return shell(`<div class="row between wrap"><h1>Equipos y máquinas</h1>${isAdmin() ? '<a class="btn btn-primary" href="#/equipo/nuevo">＋ Nuevo equipo</a>' : ''}</div>
-  <div class="tablewrap"><table class="table"><thead><tr><th>Código</th><th>Nombre</th><th>Área</th><th>Ubicación</th><th>Marca / modelo</th><th>Estado</th><th>Averías</th><th></th></tr></thead><tbody>
+  <div class="tablewrap"><table class="table"><thead><tr><th>Código</th><th>Nombre</th><th>Área</th><th>Ubicación</th><th>Estado</th><th>Averías</th><th></th></tr></thead><tbody>
   ${rows.map(e => `<tr class="${e.active ? '' : 'inactive'}"><td>${esc(e.code)}</td><td><a href="#/equipo/${e.id}">${esc(e.name)}</a></td><td>${esc(e.area_name || '—')}</td><td>${esc(e.location || '—')}</td>
-  <td>${esc(e.brand || '')} ${esc(e.model || '')}</td><td>${esc(e.status.replace(/_/g, ' ').toLowerCase())}</td><td><strong>${e.n_inc}</strong></td>
+  <td>${esc(e.status.replace(/_/g, ' ').toLowerCase())}</td><td><strong>${e.n_inc}</strong></td>
   <td>${isAdmin() ? `<a class="btn btn-sm" href="#/equipo/${e.id}/editar">Editar</a>` : ''}</td></tr>`).join('')}</tbody></table></div>`);
 }
 async function viewEquipo(id) {
   need(isAdmin()); const d = await rpc('equipment_detail', { p_id: Number(id) }), e = d.equipment;
   return shell(`${back('#/equipos', 'Equipos')}<h1>⚙️ ${esc(e.name)} <small class="muted">${esc(e.code)}</small></h1>
-  <div class="card"><dl class="info"><dt>Área</dt><dd>${esc(e.area_name || '—')}</dd><dt>Ubicación</dt><dd>${esc(e.location || '—')}</dd><dt>Marca / modelo</dt><dd>${esc(e.brand || '—')} ${esc(e.model || '')}</dd>
+  <div class="card"><dl class="info"><dt>Área</dt><dd>${esc(e.area_name || '—')}</dd><dt>Ubicación</dt><dd>${esc(e.location || '—')}</dd>
   <dt>Nº serie</dt><dd>${esc(e.serial_number || '—')}</dd><dt>Fecha de compra</dt><dd>${fmtD(e.purchase_date)}</dd><dt>Estado</dt><dd>${esc(e.status.replace(/_/g, ' ').toLowerCase())}</dd>
   <dt>Averías registradas</dt><dd><strong>${d.incidents.length}</strong></dd><dt>Tiempo total de reparación</dt><dd>${fmtMin(d.total_minutes)}</dd></dl>${e.notes ? `<p class="descbox">${esc(e.notes)}</p>` : ''}</div>
   <h2>Historial de mantenimiento</h2><div class="tablewrap"><table class="table"><thead><tr><th>Incidencia</th><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Urgencia</th><th>Estado</th><th>Tiempo</th></tr></thead><tbody>
@@ -42,7 +42,7 @@ async function viewEquipoForm(id) {
   return { html: shell(`${back('#/equipos', 'Equipos')}<h1>${id ? 'Editar equipo' : 'Nuevo equipo'}</h1><form id="feq" class="card stack"><div class="grid-form">
   <label>Código<input name="code" value="${esc(e.code || '')}" required></label><label>Nombre<input name="name" value="${esc(e.name || '')}" required></label>
   <label>Área<select name="area_id"><option value="">—</option>${areas.map(a => `<option value="${a.id}" ${e.area_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></label>
-  <label>Ubicación<input name="location" value="${esc(e.location || '')}"></label><label>Marca<input name="brand" value="${esc(e.brand || '')}"></label><label>Modelo<input name="model" value="${esc(e.model || '')}"></label>
+  <label>Ubicación<input name="location" value="${esc(e.location || '')}"></label>
   <label>Número de serie<input name="serial_number" value="${esc(e.serial_number || '')}"></label><label>Fecha de compra<input type="date" name="purchase_date" value="${esc(e.purchase_date || '')}"></label>
   <label>Estado<select name="status">${st.map(([k, v]) => `<option value="${k}" ${e.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   <label class="check"><input type="checkbox" name="active" ${e.active === false ? '' : 'checked'}> Activo</label></div>
@@ -108,8 +108,8 @@ async function saveTable(fmt, name, sheets) {      // sheets: {hoja: [cabeceras,
 }
 export async function exportIncidents(fmt, rows) {
   const ex = Object.fromEntries((await rpc('export_extra', { p_ids: rows.map(r => r.id) })).map(e => [e.id, e]));
-  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Zona', 'Línea', 'Instalación', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
-  const data = rows.map(r => { const e = ex[r.id] || {}; return [r.number, fmtDT(r.created_at), r.area_name, r.creator_name, r.zone_name || '', r.line_name || '', r.inst_name || '', r.equip_name || '', r.category_name || '', URG[r.urgency][1], STATUS[r.status], r.tech_name || '',
+  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Instalación', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
+  const data = rows.map(r => { const e = ex[r.id] || {}; return [r.number, fmtDT(r.created_at), r.area_name, r.creator_name, r.inst_name || '', r.equip_name || '', r.category_name || '', URG[r.urgency][1], STATUS[r.status], r.tech_name || '',
     r.description, e.started_at ? fmtDT(e.started_at) : '', e.finished_at ? fmtDT(e.finished_at) : '', e.minutes_spent ?? '', RES_LABEL[e.resolution_type] || '', e.work_done || '', EQ_LABEL[e.equipment_state] || '', e.materials || '', r.resolved_at ? fmtDT(r.resolved_at) : '', r.closed_at ? fmtDT(r.closed_at) : '']; });
   await saveTable(fmt, 'incidencias', { Incidencias: [H, ...data] });
 }
@@ -130,7 +130,7 @@ async function viewReport(q) {
 }
 
 // ============================================================ ADMINISTRACIÓN
-const ADM = [['usuarios', '👥', 'Usuarios', 'Crear, editar y desactivar'], ['areas', '🏭', 'Áreas', 'IV GAMA, 1ª GAMA, Oficinas…'], ['categorias', '🏷️', 'Categorías', 'Tipos de incidencia'], ['ubicaciones', '📍', 'Ubicaciones', 'Zonas, líneas, instalaciones'],
+const ADM = [['usuarios', '👥', 'Usuarios', 'Crear, editar y desactivar'], ['areas', '🏭', 'Áreas', 'IV GAMA, 1ª GAMA, Oficinas…'], ['categorias', '🏷️', 'Categorías', 'Tipos de incidencia'], ['ubicaciones', '📍', 'Instalaciones', 'Lista de instalaciones'],
   ['equipos', '⚙️', 'Equipos', 'Maestro de máquinas'], ['materiales', '🔩', 'Materiales', 'Catálogo y costes'], ['preventivo', '🗓️', 'Preventivo', 'Revisiones periódicas'], ['informes', '📑', 'Informes', 'Tiempos y costes'], ['estadisticas', '📊', 'Estadísticas', 'Dashboard'], ['ajustes', '🛠️', 'Ajustes', 'Configuración general']];
 const viewAdminHome = () => shell(`<h1>Administración</h1><div class="admin-grid">${ADM.map(([k, ic, t, d]) => `<a class="card tilelink" href="${['equipos', 'preventivo', 'informes', 'estadisticas'].includes(k) ? '#/' + k : '#/admin/' + k}">${ic}<b>${t}</b><small>${d}</small></a>`).join('')}</div>`);
 
@@ -165,9 +165,9 @@ async function viewSimple(kind) {
 }
 async function viewLocations() {
   const d = await rpc('admin_data'), areas = S.ref.areas; const sel = v => `<select name="area_id"><option value="">Todas las áreas</option>${areas.map(a => `<option value="${a.id}" ${v === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`;
-  return { html: shell(`${back('#/admin', 'Administración')}<h1>Listas de ubicación</h1><form class="card row gap wrap" data-new><select name="kind"><option value="ZONA">Zona</option><option value="LINEA">Línea</option><option value="INSTALACION">Instalación</option></select>
+  return { html: shell(`${back('#/admin', 'Administración')}<h1>Instalaciones</h1><form class="card row gap wrap" data-new><input type="hidden" name="kind" value="INSTALACION">
   <input name="name" placeholder="Nombre" required>${sel(null)}<button class="btn btn-primary">＋ Añadir</button></form>
-  ${d.locations.map(r => `<form class="card row gap wrap ${r.active ? '' : 'inactive'}" data-id="${r.id}"><span class="pill">${esc(r.kind[0] + r.kind.slice(1).toLowerCase())}</span><input name="name" value="${esc(r.name)}" required>${sel(r.area_id)}
+  ${d.locations.filter(r => r.kind === 'INSTALACION').map(r => `<form class="card row gap wrap ${r.active ? '' : 'inactive'}" data-id="${r.id}"><span class="pill">${esc(r.kind[0] + r.kind.slice(1).toLowerCase())}</span><input name="name" value="${esc(r.name)}" required>${sel(r.area_id)}
   <label class="check"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> Activa</label><button class="btn btn-sm">Guardar</button></form>`).join('')}`),
     after: () => document.querySelectorAll('form[data-id], form[data-new]').forEach(f => f.onsubmit = ev => { ev.preventDefault(); const id = f.dataset.id ? Number(f.dataset.id) : null;
       act(async () => { await rpc('admin_save_simple', { p_table: 'location_options', p_id: id, p_name: f.name.value, p_active: id ? f.active.checked : true, p_extra: { kind: f.kind ? f.kind.value : null, area_id: f.area_id.value || null } }); done('Guardado.'); }, f.querySelector('button')); }) };
