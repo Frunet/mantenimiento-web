@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.3';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.4';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -20,7 +20,7 @@ export function startExtras() {
 
 // ============================================================ EQUIPOS
 async function viewEquipos() {
-  need(staff()); const rows = await rpc('list_equipment');
+  need(isAdmin()); const rows = await rpc('list_equipment');
   return shell(`<div class="row between wrap"><h1>Equipos y máquinas</h1>${isAdmin() ? '<a class="btn btn-primary" href="#/equipo/nuevo">＋ Nuevo equipo</a>' : ''}</div>
   <div class="tablewrap"><table class="table"><thead><tr><th>Código</th><th>Nombre</th><th>Área</th><th>Ubicación</th><th>Marca / modelo</th><th>Estado</th><th>Averías</th><th></th></tr></thead><tbody>
   ${rows.map(e => `<tr class="${e.active ? '' : 'inactive'}"><td>${esc(e.code)}</td><td><a href="#/equipo/${e.id}">${esc(e.name)}</a></td><td>${esc(e.area_name || '—')}</td><td>${esc(e.location || '—')}</td>
@@ -28,7 +28,7 @@ async function viewEquipos() {
   <td>${isAdmin() ? `<a class="btn btn-sm" href="#/equipo/${e.id}/editar">Editar</a>` : ''}</td></tr>`).join('')}</tbody></table></div>`);
 }
 async function viewEquipo(id) {
-  need(staff()); const d = await rpc('equipment_detail', { p_id: Number(id) }), e = d.equipment;
+  need(isAdmin()); const d = await rpc('equipment_detail', { p_id: Number(id) }), e = d.equipment;
   return shell(`${back('#/equipos', 'Equipos')}<h1>⚙️ ${esc(e.name)} <small class="muted">${esc(e.code)}</small></h1>
   <div class="card"><dl class="info"><dt>Área</dt><dd>${esc(e.area_name || '—')}</dd><dt>Ubicación</dt><dd>${esc(e.location || '—')}</dd><dt>Marca / modelo</dt><dd>${esc(e.brand || '—')} ${esc(e.model || '')}</dd>
   <dt>Nº serie</dt><dd>${esc(e.serial_number || '—')}</dd><dt>Fecha de compra</dt><dd>${fmtD(e.purchase_date)}</dd><dt>Estado</dt><dd>${esc(e.status.replace(/_/g, ' ').toLowerCase())}</dd>

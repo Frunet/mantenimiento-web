@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.3';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.3';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.3';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.3';
+export const VERSION = '2026-10-08.4';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.4';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.4';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.4';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -93,8 +93,8 @@ export function shell(inner) {
   <a class="brand" href="#/">🔧 <span>${esc(S.ref.company || 'Mantenimiento')}</span></a>
   <nav class="nav" id="nav">
     <a href="#/">Inicio</a><a href="#/incidencias">Incidencias</a>
-    ${staff() ? '<a href="#/preventivo">Preventivo</a><a href="#/equipos">Equipos</a>' : ''}
-    ${isAdmin ? '<a href="#/estadisticas">Estadísticas</a><a href="#/informes">Informes</a><a href="#/admin">Administración</a>' : ''}
+    ${staff() ? '<a href="#/preventivo">Preventivo</a>' : ''}
+    ${isAdmin ? '<a href="#/equipos">Equipos</a><a href="#/estadisticas">Estadísticas</a><a href="#/informes">Informes</a><a href="#/admin">Administración</a>' : ''}
   </nav>
   <div class="topright">
     <button class="bell" id="bell" type="button" aria-label="Alertas">🔔<span class="badge" id="bell-count" hidden>0</span></button>
