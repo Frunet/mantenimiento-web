@@ -1,6 +1,6 @@
 // Flujo de estados: ficha de la incidencia, formulario de resolución y de «pendiente de actuación».
-import { S, rpc, esc, num, fmtDT, fmtMin, since, urgPill, stPill, shell, flash, guard, staff, route, STATUS, OPEN, loc,
-  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.5';
+import { S, rpc, esc, num, fmtDT, fmtMin, since, urgPill, stPill, shell, flash, guard, staff, route, STATUS, OPEN,
+  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.6';
 
 const act = (fn, btn) => guard(async () => { await fn(); await route(); }, btn);
 const done = (msg, kind = 'ok') => sessionStorage.setItem('flash', JSON.stringify([msg, kind]));
@@ -74,7 +74,7 @@ export async function viewDetail(id) {
 
   const html = shell(`<a class="back" href="#/">← Volver</a><div class="row between wrap"><h1>${esc(i.number)}</h1><span>${urgPill(i.urgency)} ${stPill(i.status)}</span></div>
   <section class="card"><h2>Información de la incidencia</h2><dl class="info"><dt>Fecha y hora</dt><dd>${fmtDT(i.created_at)}</dd><dt>Comunicada por</dt><dd>${esc(i.creator_name)}</dd><dt>Área</dt><dd>${esc(i.area_name)}</dd>
-    ${i.inst_name ? `<dt>Instalación</dt><dd>${esc(i.inst_name)}</dd>` : ''}<dt>Máquina / equipo</dt><dd>${esc(i.equip_name || '—')}</dd><dt>Categoría</dt><dd>${esc(i.category_name || '—')}</dd>
+    <dt>Máquina / equipo</dt><dd>${esc(i.equip_name || '—')}</dd><dt>Categoría</dt><dd>${esc(i.category_name || '—')}</dd>
     <dt>Responsable</dt><dd>${esc(i.tech_name || 'Sin asignar')}</dd>${i.assigned_at ? `<dt>Asignada</dt><dd>${fmtDT(i.assigned_at)}</dd>` : ''}${OPEN.includes(i.status) ? `<dt>Abierta desde</dt><dd>hace ${since(i.created_at)}</dd>` : ''}
     ${i.resolved_at ? `<dt>Resuelta</dt><dd>${fmtDT(i.resolved_at)}</dd>` : ''}${i.closed_at ? `<dt>Cerrada</dt><dd>${fmtDT(i.closed_at)}</dd>` : ''}</dl>
     <p class="descbox">${esc(i.description)}</p><div class="gallery">${gal('INCIDENCIA')}</div></section>

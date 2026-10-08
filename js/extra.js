@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.5';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.6';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -108,8 +108,8 @@ async function saveTable(fmt, name, sheets) {      // sheets: {hoja: [cabeceras,
 }
 export async function exportIncidents(fmt, rows) {
   const ex = Object.fromEntries((await rpc('export_extra', { p_ids: rows.map(r => r.id) })).map(e => [e.id, e]));
-  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Instalación', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
-  const data = rows.map(r => { const e = ex[r.id] || {}; return [r.number, fmtDT(r.created_at), r.area_name, r.creator_name, r.inst_name || '', r.equip_name || '', r.category_name || '', URG[r.urgency][1], STATUS[r.status], r.tech_name || '',
+  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
+  const data = rows.map(r => { const e = ex[r.id] || {}; return [r.number, fmtDT(r.created_at), r.area_name, r.creator_name, r.equip_name || '', r.category_name || '', URG[r.urgency][1], STATUS[r.status], r.tech_name || '',
     r.description, e.started_at ? fmtDT(e.started_at) : '', e.finished_at ? fmtDT(e.finished_at) : '', e.minutes_spent ?? '', RES_LABEL[e.resolution_type] || '', e.work_done || '', EQ_LABEL[e.equipment_state] || '', e.materials || '', r.resolved_at ? fmtDT(r.resolved_at) : '', r.closed_at ? fmtDT(r.closed_at) : '']; });
   await saveTable(fmt, 'incidencias', { Incidencias: [H, ...data] });
 }
@@ -130,7 +130,7 @@ async function viewReport(q) {
 }
 
 // ============================================================ ADMINISTRACIÓN
-const ADM = [['usuarios', '👥', 'Usuarios', 'Crear, editar y desactivar'], ['areas', '🏭', 'Áreas', 'IV GAMA, 1ª GAMA, Oficinas…'], ['categorias', '🏷️', 'Categorías', 'Tipos de incidencia'], ['ubicaciones', '📍', 'Instalaciones', 'Lista de instalaciones'],
+const ADM = [['usuarios', '👥', 'Usuarios', 'Crear, editar y desactivar'], ['areas', '🏭', 'Áreas', 'IV GAMA, 1ª GAMA, Oficinas…'], ['categorias', '🏷️', 'Categorías', 'Tipos de incidencia'],
   ['equipos', '⚙️', 'Equipos', 'Maestro de máquinas'], ['materiales', '🔩', 'Materiales', 'Catálogo y costes'], ['preventivo', '🗓️', 'Preventivo', 'Revisiones periódicas'], ['informes', '📑', 'Informes', 'Tiempos y costes'], ['estadisticas', '📊', 'Estadísticas', 'Dashboard'], ['ajustes', '🛠️', 'Ajustes', 'Configuración general']];
 const viewAdminHome = () => shell(`<h1>Administración</h1><div class="admin-grid">${ADM.map(([k, ic, t, d]) => `<a class="card tilelink" href="${['equipos', 'preventivo', 'informes', 'estadisticas'].includes(k) ? '#/' + k : '#/admin/' + k}">${ic}<b>${t}</b><small>${d}</small></a>`).join('')}</div>`);
 
@@ -163,15 +163,6 @@ async function viewSimple(kind) {
     after: () => document.querySelectorAll('form[data-id], form[data-new]').forEach(f => f.onsubmit = ev => { ev.preventDefault(); const id = f.dataset.id ? Number(f.dataset.id) : null;
       act(async () => { await rpc('admin_save_simple', { p_table: table, p_id: id, p_name: f.name.value, p_active: id ? f.active.checked : true }); done('Guardado.'); }, f.querySelector('button')); }) };
 }
-async function viewLocations() {
-  const d = await rpc('admin_data'), areas = S.ref.areas; const sel = v => `<select name="area_id"><option value="">Todas las áreas</option>${areas.map(a => `<option value="${a.id}" ${v === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>`;
-  return { html: shell(`${back('#/admin', 'Administración')}<h1>Instalaciones</h1><form class="card row gap wrap" data-new><input type="hidden" name="kind" value="INSTALACION">
-  <input name="name" placeholder="Nombre" required>${sel(null)}<button class="btn btn-primary">＋ Añadir</button></form>
-  ${d.locations.filter(r => r.kind === 'INSTALACION').map(r => `<form class="card row gap wrap ${r.active ? '' : 'inactive'}" data-id="${r.id}"><span class="pill">${esc(r.kind[0] + r.kind.slice(1).toLowerCase())}</span><input name="name" value="${esc(r.name)}" required>${sel(r.area_id)}
-  <label class="check"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> Activa</label><button class="btn btn-sm">Guardar</button></form>`).join('')}`),
-    after: () => document.querySelectorAll('form[data-id], form[data-new]').forEach(f => f.onsubmit = ev => { ev.preventDefault(); const id = f.dataset.id ? Number(f.dataset.id) : null;
-      act(async () => { await rpc('admin_save_simple', { p_table: 'location_options', p_id: id, p_name: f.name.value, p_active: id ? f.active.checked : true, p_extra: { kind: f.kind ? f.kind.value : null, area_id: f.area_id.value || null } }); done('Guardado.'); }, f.querySelector('button')); }) };
-}
 async function viewMaterials() {
   const d = await rpc('admin_data');
   return { html: shell(`${back('#/admin', 'Administración')}<h1>Catálogo de materiales</h1><p class="muted">Al registrar material en una incidencia se sugieren estos nombres y se rellenan unidad y coste.</p>
@@ -199,7 +190,7 @@ export async function dispatch(parts, q) {
     if (a === 'informes') return await viewReport(q);
     if (a === 'admin') { need(isAdmin());
       if (!b) return wrap(viewAdminHome()); if (b === 'usuarios') return wrap(await viewUsers()); if (b === 'usuario') return await viewUserForm(c);
-      if (b === 'areas' || b === 'categorias') return await viewSimple(b); if (b === 'ubicaciones') return await viewLocations(); if (b === 'materiales') return await viewMaterials(); if (b === 'ajustes') return await viewSettings(); }
+      if (b === 'areas' || b === 'categorias') return await viewSimple(b); if (b === 'materiales') return await viewMaterials(); if (b === 'ajustes') return await viewSettings(); }
   } catch (e) { return wrap(shell(`<div class="card center"><h1>Error</h1><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/">Volver al inicio</a></div>`)); }
   return null;
 }
