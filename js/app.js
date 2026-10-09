@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.8';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.8';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.8';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.8';
+export const VERSION = '2026-10-08.9';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.9';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.9';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.9';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -239,8 +239,8 @@ function viewNew() {
     <div class="grid-form">
     <label>Máquina / equipo<select name="equipment_id"><option value="">—</option>${R.equipment.map(e => `<option value="${e.id}" data-area="${e.area_id ?? ''}">${esc(e.name)}</option>`).join('')}</select></label>
     <label>Categoría<select name="category_id"><option value="">—</option>${R.categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div></div>
-  <div class="card stack"><label for="description"><strong>¿Qué ocurre?</strong></label>
-    <textarea name="description" id="description" rows="5" required minlength="5" placeholder="Ej.: El motor de la cinta transportadora de la línea 2 hace un ruido extraño y se ha parado."></textarea></div>
+  <div class="card stack"><label for="description"><strong>¿Qué ocurre?</strong> <small class="muted">(obligatorio)</small></label>
+    <textarea name="description" id="description" rows="5" required minlength="3" placeholder="Ej.: El motor de la cinta transportadora de la línea 2 hace un ruido extraño y se ha parado."></textarea></div>
   <div class="card stack"><strong>Urgencia</strong><div class="urgency-pick">
     ${Object.entries(URG).map(([k, [ic, l, d]]) => `<label class="urg-opt urg-${k}"><input type="radio" name="urgency" value="${k}" required><span class="urg-box"><span class="urg-ic">${ic}</span><b>${l}</b><small>${d}</small></span></label>`).join('')}</div></div>
   <div class="card stack"><strong>Fotografías</strong><div class="row gap wrap"><button type="button" class="btn btn-photo" id="btn-camera">📷 AÑADIR FOTO</button><button type="button" class="btn" id="btn-gallery">🖼 Elegir de la galería</button></div>
@@ -261,8 +261,13 @@ function wireNew() {
   form.onsubmit = async e => {
     e.preventDefault(); if (busy) return;
     const f = new FormData(form), btn = document.getElementById('send');
-    if (!f.get('urgency')) return alert('Selecciona la urgencia.');
-    if ((f.get('description') || '').trim().length < 5) { form.description.focus(); return alert('Describe qué ocurre.'); }
+    const dCard = form.description.closest('.card'), uCard = form.querySelector('.urgency-pick').closest('.card');
+    const fail = (card, msg, focusEl) => { let m = card.querySelector('.ferr'); if (!m) { m = document.createElement('div'); m.className = 'ferr'; m.setAttribute('role', 'alert'); card.append(m); }
+      m.textContent = msg; card.classList.add('invalid'); card.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (focusEl) focusEl.focus({ preventScroll: true }); };
+    [dCard, uCard].forEach(c => { c.classList.remove('invalid'); c.querySelector('.ferr')?.remove(); });
+    const desc = (f.get('description') || '').trim();
+    if (desc.length < 3) return fail(dCard, desc.length ? 'Escribe un poco más: indica qué ocurre (mínimo 3 letras).' : 'Escribe qué ocurre antes de enviar (obligatorio).', form.description);
+    if (!f.get('urgency')) return fail(uCard, 'Selecciona la urgencia (crítica, alta, media o baja).');
     btn.disabled = true; btn.textContent = 'Enviando…';
     try {
       const res = await rpc('create_incident', { p_area: num(f.get('area_id')), p_zone: null, p_line: null, p_inst: null,

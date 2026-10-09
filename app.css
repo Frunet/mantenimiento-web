@@ -181,3 +181,7 @@ details summary{cursor:pointer;font-weight:600}
   .stats-grid{grid-template-columns:1fr 1fr;gap:.4rem}.card{box-shadow:none;border:1px solid #ccd5dd;break-inside:avoid;padding:.6rem;margin:.3rem 0}
   .report-head h2{font-size:1.1rem;margin-top:0}
 }
+
+/* errores de formulario en linea */
+.card.invalid{outline:2px solid var(--u-CRITICA)}
+.ferr{color:#a3170d;font-weight:700;margin-top:.2rem}
