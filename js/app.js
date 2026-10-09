@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.11';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.11';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.11';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.11';
+export const VERSION = '2026-10-08.12';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.12';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.12';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.12';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -286,14 +286,13 @@ function viewNew() {
 function wireNew() {
   const files = []; let busy = false; const prev = document.getElementById('previews'), form = document.getElementById('fnew');
   const sync = () => { prev.innerHTML = ''; files.forEach((f, i) => { const d = document.createElement('div'); d.className = 'pv'; const img = document.createElement('img'); img.src = URL.createObjectURL(f); img.alt = 'Vista previa';
-    const b = document.createElement('button'); b.type = 'button'; b.textContent = '×'; b.setAttribute('aria-label', 'Quitar foto'); b.onclick = () => { files.splice(i, 1); sync(); }; d.append(img, b); prev.append(d); }); };
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = '×'; b.setAttribute('aria-label', 'Quitar foto'); b.onclick = () => { files.splice(i, 1); sync(); }; d.append(img, b); prev.append(d); });
+    const cb = document.getElementById('btn-camera'); cb.textContent = files.length ? `📷 AÑADIR OTRA FOTO (${files.length}/10)` : '📷 AÑADIR FOTO'; };
   const add = async list => { busy = true; for (const f of list) if (files.length < 10 && f.type.startsWith('image/')) files.push(await compressImage(f)); sync(); busy = false; };
   const cam = document.getElementById('in-camera'), gal = document.getElementById('in-gallery');
   document.getElementById('btn-camera').onclick = () => cam.click(); document.getElementById('btn-gallery').onclick = () => gal.click();
   cam.onchange = () => { const l = [...cam.files]; cam.value = ''; add(l); }; gal.onchange = () => { const l = [...gal.files]; gal.value = ''; add(l); };
   const area = document.getElementById('area_id');
-  const byArea = () => { if (!area) return; form.querySelectorAll('option[data-area]').forEach(o => { const ok = !o.dataset.area || o.dataset.area === area.value; o.hidden = !ok; o.disabled = !ok; if (!ok && o.selected) o.parentElement.value = ''; }); };
-  if (area) { area.onchange = byArea; byArea(); }
   form.onsubmit = async e => {
     e.preventDefault(); if (busy) return;
     const f = new FormData(form), btn = document.getElementById('send');
