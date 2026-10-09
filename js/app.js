@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.10';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.10';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.10';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.10';
+export const VERSION = '2026-10-08.11';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.11';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.11';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.11';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');

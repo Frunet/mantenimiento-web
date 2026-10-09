@@ -1,5 +1,6 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.10';
+import { USE_MATERIALS } from '../config.js?v=2026-10-08.11';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.11';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -110,14 +111,15 @@ async function saveTable(fmt, name, sheets) {      // sheets: {hoja: [cabeceras,
 }
 export async function exportIncidents(fmt, rows) {
   const ex = Object.fromEntries((await rpc('export_extra', { p_ids: rows.map(r => r.id) })).map(e => [e.id, e]));
-  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', 'Materiales', 'Fecha resolución', 'Fecha cierre'];
+  const H = ['Número', 'Fecha creación', 'Área', 'Usuario', 'Equipo', 'Categoría', 'Urgencia', 'Estado', 'Técnico', 'Descripción', 'Inicio', 'Fin', 'Tiempo (min)', 'Cómo se resolvió', 'Trabajo realizado', 'Equipo operativo', ...(USE_MATERIALS ? ['Materiales'] : []), 'Fecha resolución', 'Fecha cierre'];
   const data = rows.map(r => { const e = ex[r.id] || {}; return [r.number, fmtDT(r.created_at), r.area_name, r.creator_name, r.equip_name || '', r.category_name || '', URG[r.urgency][1], STATUS[r.status], r.tech_name || '',
-    r.description, e.started_at ? fmtDT(e.started_at) : '', e.finished_at ? fmtDT(e.finished_at) : '', e.minutes_spent ?? '', RES_LABEL[e.resolution_type] || '', e.work_done || '', EQ_LABEL[e.equipment_state] || '', e.materials || '', r.resolved_at ? fmtDT(r.resolved_at) : '', r.closed_at ? fmtDT(r.closed_at) : '']; });
+    r.description, e.started_at ? fmtDT(e.started_at) : '', e.finished_at ? fmtDT(e.finished_at) : '', e.minutes_spent ?? '', RES_LABEL[e.resolution_type] || '', e.work_done || '', EQ_LABEL[e.equipment_state] || '', ...(USE_MATERIALS ? [e.materials || ''] : []), r.resolved_at ? fmtDT(r.resolved_at) : '', r.closed_at ? fmtDT(r.closed_at) : '']; });
   await saveTable(fmt, 'incidencias', { Incidencias: [H, ...data] });
 }
 const REP = { tecnico: ['Por técnico', ['Técnico', 'Incidencias', 'Horas', 'Coste material (€)']], equipo: ['Por equipo', ['Equipo', 'Incidencias', 'Horas', 'Coste material (€)']], area: ['Por área', ['Área', 'Incidencias', 'Horas', 'Coste material (€)']],
   categoria: ['Por categoría', ['Categoría', 'Incidencias', 'Horas', 'Coste material (€)']], materiales: ['Materiales', ['Material', 'Unidad', 'Cantidad', 'Coste (€)', 'Incidencias']],
   preventivo: ['Preventivo (proyectos)', ['Estado', 'Proyectos', 'Con fecha vencida']] };
+if (!USE_MATERIALS) { delete REP.materiales; for (const k of ['tecnico', 'equipo', 'area', 'categoria']) REP[k][1] = REP[k][1].slice(0, 3); }
 // ---- Informe resumen (una página)
 const iso = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 const fmtDay = v => new Date(v + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -158,7 +160,7 @@ async function viewReport(q) {
     ${kpi('Tiempo medio de respuesta', fmtMin(c.resp_min), delta(c.resp_min, pv.resp_min, 'down'), 'desde que se crea')}
     ${kpi('Tiempo medio de resolución', fmtMin(c.res_min), delta(c.res_min, pv.res_min, 'down'), 'hasta resolver')}
     ${kpi('Horas de trabajo', nf(c.horas, 1) + ' h', delta(c.horas, pv.horas, 'neutral'), '')}
-    ${kpi('Coste de material', nf(c.coste, 2) + ' €', delta(c.coste, pv.coste, 'neutral'), '')}
+    ${USE_MATERIALS ? kpi('Coste de material', nf(c.coste, 2) + ' €', delta(c.coste, pv.coste, 'neutral'), '') : kpi('Incidencias críticas', c.criticas, delta(c.criticas, pv.criticas, 'neutral'), 'del periodo')}
     ${kpi('Abiertas ahora', abiertas, '', o.mas_7d ? `<span class="bad-t">${o.mas_7d} con más de 7 días</span>` : 'ninguna con más de 7 días')}
     ${kpi('Pend. de actuación', o.pend_actuacion, '', `${o.pendientes} pendientes · ${o.proceso} en proceso`)}
   </div>
@@ -169,20 +171,20 @@ async function viewReport(q) {
     <section class="card"><h2>Por urgencia</h2>${urg.map(u => bars([[u[0], u[1]]], `var(--u-${u[2]})`)).join('')}</section>
     <section class="card"><h2>Por categoría</h2>${bars(d.categories.map(x => [x.name, x.n]))}</section>
     <section class="card"><h2>Carga por técnico</h2>${bars(d.techs.map(x => [`${x.name} · ${nf(x.horas, 1)} h`, x.n]))}</section>
-    <section class="card"><h2>Materiales más usados</h2>${d.materials.length ? `<ul class="plain">${d.materials.map(m => `<li><strong>${esc(m.name)}</strong> — ${+m.qty} ${esc(m.unit)}${m.coste != null ? ` · ${nf(m.coste, 2)} €` : ''}</li>`).join('')}</ul>` : '<p class="muted">Sin materiales registrados.</p>'}</section>
+    ${USE_MATERIALS ? `<section class="card"><h2>Materiales más usados</h2>${d.materials.length ? `<ul class="plain">${d.materials.map(m => `<li><strong>${esc(m.name)}</strong> — ${+m.qty} ${esc(m.unit)}${m.coste != null ? ` · ${nf(m.coste, 2)} €` : ''}</li>`).join('')}</ul>` : '<p class="muted">Sin materiales registrados.</p>'}</section>` : ''}
   </div>
   <section class="card"><h2>Preventivo — proyectos</h2>${d.projects.length ? d.projects.map(x => `<span class="chip">${esc(x.status)} · <b>${x.n}</b>${x.vencidos ? ` <span class="bad-t">(${x.vencidos} con fecha vencida)</span>` : ''}</span>`).join(' ') : '<p class="muted">Sin proyectos.</p>'}</section>`);
   return { html, after: () => {
     document.getElementById('frp').onsubmit = ev => { ev.preventDefault(); const f = ev.target; if (!f.date_from.value || !f.date_to.value) return; location.hash = `#/informes?date_from=${f.date_from.value}&date_to=${f.date_to.value}`; };
     document.getElementById('rp-xlsx').onclick = e => guard(async () => {
       const [r, pj] = await Promise.all([rpc('report', { p_from: per.from, p_to: per.to }), rpc('list_projects')]); r.preventivo = projectsByStatus(pj);
-      await saveTable('xlsx', 'informe_mantenimiento', Object.fromEntries(Object.entries(REP).map(([k, [t, h]]) => [t, [h, ...r[k]]]))); }, e.target); } };
+      await saveTable('xlsx', 'informe_mantenimiento', Object.fromEntries(Object.entries(REP).map(([k, [t, h]]) => [t, [h, ...r[k].map(row => row.slice(0, h.length))]]))); }, e.target); } };
 }
 
 // ============================================================ ADMINISTRACIÓN
 const ADM = [['usuarios', '👥', 'Usuarios', 'Crear, editar y desactivar'], ['areas', '🏭', 'Áreas', 'IV GAMA, 1ª GAMA, Oficinas…'], ['categorias', '🏷️', 'Categorías', 'Tipos de incidencia'],
   ['equipos', '⚙️', 'Equipos', 'Maestro de máquinas'], ['materiales', '🔩', 'Materiales', 'Catálogo y costes'], ['preventivo', '🗓️', 'Preventivo', 'Revisiones periódicas'], ['informes', '📑', 'Informes', 'Tiempos y costes'], ['estadisticas', '📊', 'Estadísticas', 'Dashboard'], ['ajustes', '🛠️', 'Ajustes', 'Configuración general']];
-const viewAdminHome = () => shell(`<h1>Administración</h1><div class="admin-grid">${ADM.map(([k, ic, t, d]) => `<a class="card tilelink" href="${['equipos', 'preventivo', 'informes', 'estadisticas'].includes(k) ? '#/' + k : '#/admin/' + k}">${ic}<b>${t}</b><small>${d}</small></a>`).join('')}</div>`);
+const viewAdminHome = () => shell(`<h1>Administración</h1><div class="admin-grid">${ADM.filter(t => USE_MATERIALS || t[0] !== 'materiales').map(([k, ic, t, d]) => `<a class="card tilelink" href="${['equipos', 'preventivo', 'informes', 'estadisticas'].includes(k) ? '#/' + k : '#/admin/' + k}">${ic}<b>${t}</b><small>${d}</small></a>`).join('')}</div>`);
 
 async function viewUsers() {
   const u = await rpc('list_users');
@@ -240,7 +242,7 @@ export async function dispatch(parts, q) {
     if (a === 'informes') return await viewReport(q);
     if (a === 'admin') { need(isAdmin());
       if (!b) return wrap(viewAdminHome()); if (b === 'usuarios') return wrap(await viewUsers()); if (b === 'usuario') return await viewUserForm(c);
-      if (b === 'areas' || b === 'categorias') return await viewSimple(b); if (b === 'materiales') return await viewMaterials(); if (b === 'ajustes') return await viewSettings(); }
+      if (b === 'areas' || b === 'categorias') return await viewSimple(b); if (b === 'materiales' && USE_MATERIALS) return await viewMaterials(); if (b === 'ajustes') return await viewSettings(); }
   } catch (e) { return wrap(shell(`<div class="card center"><h1>Error</h1><p>${esc(e.message)}</p><a class="btn btn-primary" href="#/">Volver al inicio</a></div>`)); }
   return null;
 }

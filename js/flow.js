@@ -1,6 +1,7 @@
 // Flujo de estados: ficha de la incidencia, formulario de resolución y de «pendiente de actuación».
+import { USE_MATERIALS } from '../config.js?v=2026-10-08.11';
 import { warnBox, S, rpc, esc, num, fmtDT, fmtMin, since, urgPill, stPill, shell, flash, guard, staff, route, STATUS, OPEN,
-  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.10';
+  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.11';
 
 const act = (fn, btn) => guard(async () => { await fn(); await route(); }, btn);
 const done = (msg, kind = 'ok') => sessionStorage.setItem('flash', JSON.stringify([msg, kind]));
@@ -52,7 +53,7 @@ export async function viewDetail(id) {
     ${i.closed_at ? `<dt>Cerrada</dt><dd>${fmtDT(i.closed_at)}</dd>` : ''}</dl><h3>Trabajo realizado</h3><p class="descbox">${esc(a.work_done)}</p>
     ${a.observations ? `<h3>Observaciones</h3><p class="descbox">${esc(a.observations)}</p>` : ''}</section>` : '';
 
-  const matCard = d.materials.length || (isStaff && edit) ? `<section class="card" id="materiales"><h2>Materiales utilizados</h2>
+  const matCard = USE_MATERIALS && (d.materials.length || (isStaff && edit)) ? `<section class="card" id="materiales"><h2>Materiales utilizados</h2>
     ${d.materials.length ? `<div class="tablewrap"><table class="table"><thead><tr><th>Material</th><th>Cantidad</th><th>Unidad</th><th>Observaciones</th>${isStaff ? '<th>€/ud</th><th>Importe</th>' : ''}${isStaff && edit ? '<th></th>' : ''}</tr></thead><tbody>
     ${d.materials.map(m => `<tr><td>${esc(m.name)}</td><td>${+m.quantity}</td><td>${esc(m.unit)}</td><td>${esc(m.notes || '')}</td>${isStaff ? `<td>${m.unit_cost != null ? (+m.unit_cost).toFixed(2) : '—'}</td><td>${m.unit_cost != null ? (m.quantity * m.unit_cost).toFixed(2) + ' €' : '—'}</td>` : ''}
     ${isStaff && edit ? `<td><button class="linkbtn" data-delmat="${m.id}">✕</button></td>` : ''}</tr>`).join('')}</tbody></table></div>${isStaff && costed.length ? `<p><strong>Coste total del material: ${total.toFixed(2)} €</strong></p>` : ''}` : '<p class="muted">Sin materiales registrados.</p>'}
@@ -68,7 +69,7 @@ export async function viewDetail(id) {
     <div class="timebox"><span>Tiempo empleado</span><div class="row gap"><label class="inline">Horas<input type="number" min="0" name="hours" value="${a?.minutes_spent != null ? Math.floor(a.minutes_spent / 60) : ''}"></label>
     <label class="inline">Min<input type="number" min="0" max="59" name="minutes" value="${a?.minutes_spent != null ? a.minutes_spent % 60 : ''}"></label></div></div>
     <label>Categoría<select name="category"><option value="">—</option>${R.categories.map(c => `<option value="${c.id}" ${i.category_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
-    <label>Coste del material (€)<input name="cost" inputmode="decimal" value="${a?.material_cost ?? ''}"></label></div>
+    ${USE_MATERIALS ? `<label>Coste del material (€)<input name="cost" inputmode="decimal" value="${a?.material_cost ?? ''}"></label>` : ''}</div>
     <label>Trabajo realizado<textarea name="work" rows="3">${esc(a?.work_done || '')}</textarea></label><label>Observaciones<textarea name="obs" rows="2">${esc(a?.observations || '')}</textarea></label>
     <button class="btn btn-primary">💾 Guardar corrección</button></form></details>` : '';
 
@@ -127,7 +128,7 @@ function wireDetail(id, d) {
   const fa = document.getElementById('faction');
   if (fa) fa.onsubmit = e => { e.preventDefault(); const f = new FormData(fa);
     act(async () => { await rpc('save_action', { p_id: pid, p_tech: f.get('tech') || null, p_started: fromLocalInput(f.get('started')), p_finished: fromLocalInput(f.get('finished')), p_hours: num(f.get('hours')), p_minutes: num(f.get('minutes')),
-      p_work: f.get('work'), p_obs: f.get('obs'), p_cost: num((f.get('cost') || '').replace(',', '.')), p_category: num(f.get('category')) }); done('Actuación corregida.'); }, fa.querySelector('button.btn-primary')); };
+      p_work: f.get('work'), p_obs: f.get('obs'), p_cost: USE_MATERIALS ? num((f.get('cost') || '').replace(',', '.')) : (d.action?.material_cost ?? null), p_category: num(f.get('category')) }); done('Actuación corregida.'); }, fa.querySelector('button.btn-primary')); };
 }
 
 // ============================================================ RESOLVER INCIDENCIA
@@ -141,11 +142,11 @@ export async function viewResolve(id) {
   <section class="card stack"><h2>¿Cómo se ha resuelto?</h2><div class="optgrid">${Object.entries(RES_LABEL).map(([k, v]) => opt('type', k, v)).join('')}</div>
     <label>Trabajo realizado (obligatorio)<textarea name="work" rows="4" required placeholder="Ej.: Se desmontó el motor, se detectó desgaste del rodamiento y se sustituyeron los dos rodamientos."></textarea></label></section>
 
-  <section class="card stack"><h2>Materiales utilizados</h2>
+${USE_MATERIALS ? `  <section class="card stack"><h2>Materiales utilizados</h2>
     ${d.materials.length ? `<p class="muted">Ya registrados: ${d.materials.map(m => esc(m.name) + ' ×' + +m.quantity).join(', ')}</p>` : ''}
     <div id="mats" class="stack"></div><button type="button" class="btn" id="addmat">＋ Añadir material</button>
     <datalist id="catalog">${cat.map(c => `<option value="${esc(c.name)}" data-unit="${esc(c.unit)}" data-cost="${c.unit_cost ?? ''}">`).join('')}</datalist>
-    <datalist id="units"><option>Ud</option><option>m</option><option>kg</option><option>l</option><option>Caja</option></datalist></section>
+    <datalist id="units"><option>Ud</option><option>m</option><option>kg</option><option>l</option><option>Caja</option></datalist></section>` : ''}
 
   <section class="card stack"><h2>Tiempo empleado</h2>
     <dl class="info"><dt>Comienzo</dt><dd>${fmtDT(d.action?.started_at)}</dd><dt>Finalización</dt><dd>Ahora (${fmtDT(new Date().toISOString())})</dd><dt>Tiempo trabajado</dt><dd><strong>${fmtMin(w)}</strong> <small class="muted">(no cuenta las pausas)</small></dd></dl>
@@ -172,7 +173,7 @@ function wireResolve(id) {
     r.querySelector('button').onclick = () => r.remove();
     r.querySelector('[name=m_name]').onchange = e => { const o = [...document.querySelectorAll('#catalog option')].find(x => x.value.toLowerCase() === e.target.value.trim().toLowerCase()); if (o) { r.querySelector('[name=m_unit]').value = o.dataset.unit || 'Ud'; r.dataset.cost = o.dataset.cost || ''; } };
     mats.append(r); };
-  document.getElementById('addmat').onclick = addRow; addRow();
+  if (mats) { document.getElementById('addmat').onclick = addRow; addRow(); }
   const eqs = f.querySelectorAll('input[name=eq]'), obs = document.getElementById('obs-wrap'), no = document.getElementById('no-wrap'), send = document.getElementById('send');
   const sync = () => { const v = f.querySelector('input[name=eq]:checked')?.value; obs.hidden = v !== 'SI_OBSERVACIONES'; no.hidden = v !== 'NO'; send.hidden = v === 'NO'; };
   eqs.forEach(e => e.onchange = sync);
@@ -193,7 +194,7 @@ function wireResolve(id) {
     if (work.length < 5) { f.work.focus(); return warnBox('Falta el trabajo realizado. Explica qué has hecho para resolver la incidencia (mínimo 5 letras).'); }
     if (!eq) return warnBox('No has indicado si el equipo queda operativo. Elige Sí, Sí con observaciones o No.');
     if (eq === 'SI_OBSERVACIONES' && notes.length < 3) { f.notes.focus(); return warnBox('Has marcado «Sí, pero con observaciones» y no has escrito ninguna. Escribe qué hay que vigilar.'); }
-    const materials = [...mats.querySelectorAll('.matrow')].map(r => ({ name: r.querySelector('[name=m_name]').value.trim(), quantity: num(r.querySelector('[name=m_qty]').value.replace(',', '.')),
+    const materials = !mats ? [] : [...mats.querySelectorAll('.matrow')].map(r => ({ name: r.querySelector('[name=m_name]').value.trim(), quantity: num(r.querySelector('[name=m_qty]').value.replace(',', '.')),
       unit: r.querySelector('[name=m_unit]').value, notes: r.querySelector('[name=m_notes]').value, unit_cost: num(r.dataset.cost) })).filter(m => m.name);
     if (materials.some(m => !(m.quantity > 0))) return warnBox('La cantidad de algún material no es válida. Debe ser un número mayor que 0.');
     const minutes = f.hours ? (num(f.hours.value) || 0) * 60 + (num(f.minutes.value) || 0) : null;
