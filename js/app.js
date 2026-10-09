@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.12';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.12';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.12';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.12';
+export const VERSION = '2026-10-08.13';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.13';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.13';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.13';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -273,7 +273,8 @@ function viewNew() {
   <div class="card stack">${enc ? `<div class="fixed-area">🏭 Área: <strong>${esc(S.me.area_name)}</strong></div><input type="hidden" name="area_id" value="${S.me.area_id}">`
     : `<label>Área<select name="area_id" id="area_id">${R.areas.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></label>`}
     <div class="grid-form">
-    <label>Máquina / equipo<select name="equipment_id"><option value="">—</option>${R.equipment.map(e => `<option value="${e.id}" data-area="${e.area_id ?? ''}">${esc(e.name)}</option>`).join('')}</select></label>
+    <label>Máquina / equipo<select name="equipment_id"><option value="">—</option>${R.equipment.map(e => `<option value="${e.id}" data-area="${e.area_id ?? ''}">${esc(e.name)}</option>`).join('')}<option value="otros">Otros (escribir)…</option></select>
+      <input name="equipment_other" id="equipment_other" maxlength="120" placeholder="Escribe la máquina o equipo" hidden style="margin-top:.4rem"></label>
     <label>Categoría<select name="category_id"><option value="">—</option>${R.categories.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label></div></div>
   <div class="card stack"><label for="description"><strong>¿Qué ocurre?</strong> <small class="muted">(obligatorio)</small></label>
     <textarea name="description" id="description" rows="5" required minlength="3" placeholder="Ej.: El motor de la cinta transportadora de la línea 2 hace un ruido extraño y se ha parado."></textarea></div>
@@ -293,6 +294,8 @@ function wireNew() {
   document.getElementById('btn-camera').onclick = () => cam.click(); document.getElementById('btn-gallery').onclick = () => gal.click();
   cam.onchange = () => { const l = [...cam.files]; cam.value = ''; add(l); }; gal.onchange = () => { const l = [...gal.files]; gal.value = ''; add(l); };
   const area = document.getElementById('area_id');
+  const eqSel = form.equipment_id, eqOther = document.getElementById('equipment_other');
+  eqSel.onchange = () => { eqOther.hidden = eqSel.value !== 'otros'; if (!eqOther.hidden) eqOther.focus(); };
   form.onsubmit = async e => {
     e.preventDefault(); if (busy) return;
     const f = new FormData(form), btn = document.getElementById('send');
@@ -302,11 +305,12 @@ function wireNew() {
     [dCard, uCard].forEach(c => { c.classList.remove('invalid'); c.querySelector('.ferr')?.remove(); });
     const desc = (f.get('description') || '').trim();
     if (desc.length < 3) return fail(dCard, desc.length ? 'La descripción es demasiado corta. Escribe al menos 3 letras (por ejemplo «Fuga» o «Luz»).' : 'No has escrito qué ocurre. Describe la avería en el campo «¿Qué ocurre?» antes de enviar la incidencia.', form.description);
+    if (f.get('equipment_id') === 'otros' && !(f.get('equipment_other') || '').trim()) return warnBox('Has elegido «Otros» en Máquina / equipo. Escribe cuál es en el campo que aparece debajo.', () => eqOther.focus());
     if (!f.get('urgency')) return fail(uCard, 'No has elegido la urgencia. Toca una de las cuatro opciones (crítica, alta, media o baja) antes de enviar.');
     btn.disabled = true; btn.textContent = 'Enviando…';
     try {
       const res = await rpc('create_incident', { p_area: num(f.get('area_id')), p_zone: null, p_line: null, p_inst: null,
-        p_equip: num(f.get('equipment_id')), p_cat: num(f.get('category_id')), p_desc: f.get('description'), p_urgency: f.get('urgency') });
+        p_equip: num(f.get('equipment_id') === 'otros' ? '' : f.get('equipment_id')), p_equip_other: f.get('equipment_id') === 'otros' ? (f.get('equipment_other') || '').trim() : null, p_cat: num(f.get('category_id')), p_desc: f.get('description'), p_urgency: f.get('urgency') });
       let warn = '';
       if (files.length) { try { await rpc('register_photos', { p_id: res.id, p_kind: 'INCIDENCIA', p_paths: await uploadPhotos(res.id, files) }); }
         catch (err) { warn = ' Atención: ' + err.message; } }

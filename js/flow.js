@@ -1,7 +1,7 @@
 // Flujo de estados: ficha de la incidencia, formulario de resolución y de «pendiente de actuación».
-import { USE_MATERIALS } from '../config.js?v=2026-10-08.12';
+import { USE_MATERIALS } from '../config.js?v=2026-10-08.13';
 import { warnBox, S, rpc, esc, num, fmtDT, fmtMin, since, urgPill, stPill, shell, flash, guard, staff, route, STATUS, OPEN,
-  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.12';
+  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.13';
 
 const act = (fn, btn) => guard(async () => { await fn(); await route(); }, btn);
 const done = (msg, kind = 'ok') => sessionStorage.setItem('flash', JSON.stringify([msg, kind]));
