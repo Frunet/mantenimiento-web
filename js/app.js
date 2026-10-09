@@ -1,8 +1,8 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-export const VERSION = '2026-10-08.9';
-import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.9';
-import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.9';
-import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.9';
+export const VERSION = '2026-10-08.10';
+import { SUPABASE_URL, SUPABASE_KEY, LOGIN_DOMAIN } from '../config.js?v=2026-10-08.10';
+import { dispatch, startExtras, exportIncidents } from './extra.js?v=2026-10-08.10';
+import { viewDetail, viewResolve, viewPause } from './flow.js?v=2026-10-08.10';
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $app = document.getElementById('app');
@@ -42,13 +42,49 @@ export async function rpc(name, args = {}) {
   if (error) throw new Error(error.message);
   return data;
 }
+// ---------------------------------------------------------------- errores: ventana con el motivo
+export function explain(err) {
+  const raw = String((err && err.message) || err || '');
+  const m = raw.toLowerCase();
+  const rules = [
+    [/failed to fetch|networkerror|load failed|network request failed|fetch failed/, 'No se ha podido conectar con el servidor.', 'Comprueba que tienes conexión a Internet (datos o wifi) e inténtalo de nuevo.'],
+    [/jwt|refresh token|not authenticated|auth session missing/, 'Tu sesión ha caducado.', 'Pulsa «Salir» (al final de la pantalla) y vuelve a entrar con tu usuario y contraseña.'],
+    [/payload too large|exceeded the maximum|too large|413/, 'La foto es demasiado grande.', 'El máximo es de 10 MB por foto. Haz la foto con menos resolución o elige otra.'],
+    [/mime type|invalid_mime|unsupported/, 'El archivo no es una imagen admitida.', 'Solo se aceptan fotos JPG, PNG, WEBP, GIF o HEIC.'],
+    [/row-level security|permission denied|violates row-level|42501|forbidden|not authorized/, 'No tienes permiso para hacer esto.', 'Tu usuario no está autorizado para esta acción. Si crees que es un error, avisa al administrador.'],
+    [/duplicate key|already exists/, 'Ya existe un registro con ese valor.', 'Cambia el nombre o el código e inténtalo de nuevo.'],
+    [/invalid login|invalid_credentials|invalid grant/, 'Usuario o contraseña incorrectos.', 'Revisa que no haya espacios de más o la tecla Bloq Mayús activada.'],
+  ];
+  for (const [re, what, why] of rules) if (re.test(m)) return { what, why, raw };
+  return { what: raw || 'Ha ocurrido un error inesperado.', why: raw ? '' : 'Inténtalo de nuevo. Si se repite, avisa al administrador.', raw: '' };
+}
+export function showError(error, title = 'No se ha podido completar la acción', opts = {}) {
+  const { what, why, raw } = opts.plain ? { what: String(error), why: '', raw: '' } : explain(error);
+  document.getElementById('errmodal')?.remove();
+  const back = document.createElement('div');
+  back.id = 'errmodal'; back.className = 'modal-back'; back.setAttribute('role', 'alertdialog'); back.setAttribute('aria-modal', 'true'); back.setAttribute('aria-labelledby', 'errtitle');
+  back.innerHTML = `<div class="modal"><div class="modal-ic">⚠️</div><h3 id="errtitle">${esc(title)}</h3><p class="modal-what">${esc(what)}</p>
+    ${why ? `<p class="modal-why"><strong>Qué hacer:</strong> ${esc(why)}</p>` : ''}${raw && raw !== what ? `<details class="modal-raw"><summary>Detalle técnico</summary><code>${esc(raw)}</code></details>` : ''}
+    <button class="btn btn-primary btn-block" id="errok" type="button">Entendido</button></div>`;
+  document.body.append(back);
+  const close = () => { back.remove(); if (opts.onClose) opts.onClose(); };
+  back.querySelector('#errok').onclick = close;
+  back.onclick = e => { if (e.target === back) close(); };
+  back.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  back.querySelector('#errok').focus();
+}
+export const warnBox = (msg, onClose) => showError(msg, 'Falta un dato obligatorio', { plain: true, onClose });
+window.addEventListener('unhandledrejection', ev => showError(ev.reason, 'Ha ocurrido un error inesperado'));
+window.addEventListener('error', ev => { if (ev.message && !/ResizeObserver/.test(ev.message)) showError(ev.error || ev.message, 'Ha ocurrido un error inesperado'); });
+
 export function flash(msg, kind = 'ok') {
+  if (kind === 'error') return showError(msg);
   const el = document.createElement('div'); el.className = `flash flash-${kind}`; el.textContent = msg;
   const box = document.getElementById('flashbox'); if (box) { box.prepend(el); setTimeout(() => el.remove(), 6000); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 }
 export async function guard(fn, btn) {
   if (btn) btn.disabled = true;
-  try { return await fn(); } catch (e) { flash(e.message || String(e), 'error'); } finally { if (btn) btn.disabled = false; }
+  try { return await fn(); } catch (e) { showError(e); } finally { if (btn) btn.disabled = false; }
 }
 
 // Reduce fotos (máx. 1600 px, JPEG) antes de subirlas
@@ -263,11 +299,11 @@ function wireNew() {
     const f = new FormData(form), btn = document.getElementById('send');
     const dCard = form.description.closest('.card'), uCard = form.querySelector('.urgency-pick').closest('.card');
     const fail = (card, msg, focusEl) => { let m = card.querySelector('.ferr'); if (!m) { m = document.createElement('div'); m.className = 'ferr'; m.setAttribute('role', 'alert'); card.append(m); }
-      m.textContent = msg; card.classList.add('invalid'); card.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (focusEl) focusEl.focus({ preventScroll: true }); };
+      m.textContent = msg; card.classList.add('invalid'); warnBox(msg, () => { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (focusEl) focusEl.focus({ preventScroll: true }); }); };
     [dCard, uCard].forEach(c => { c.classList.remove('invalid'); c.querySelector('.ferr')?.remove(); });
     const desc = (f.get('description') || '').trim();
-    if (desc.length < 3) return fail(dCard, desc.length ? 'Escribe un poco más: indica qué ocurre (mínimo 3 letras).' : 'Escribe qué ocurre antes de enviar (obligatorio).', form.description);
-    if (!f.get('urgency')) return fail(uCard, 'Selecciona la urgencia (crítica, alta, media o baja).');
+    if (desc.length < 3) return fail(dCard, desc.length ? 'La descripción es demasiado corta. Escribe al menos 3 letras (por ejemplo «Fuga» o «Luz»).' : 'No has escrito qué ocurre. Describe la avería en el campo «¿Qué ocurre?» antes de enviar la incidencia.', form.description);
+    if (!f.get('urgency')) return fail(uCard, 'No has elegido la urgencia. Toca una de las cuatro opciones (crítica, alta, media o baja) antes de enviar.');
     btn.disabled = true; btn.textContent = 'Enviando…';
     try {
       const res = await rpc('create_incident', { p_area: num(f.get('area_id')), p_zone: null, p_line: null, p_inst: null,

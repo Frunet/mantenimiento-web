@@ -1,5 +1,5 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.9';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.10';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));

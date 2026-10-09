@@ -1,6 +1,6 @@
 // Flujo de estados: ficha de la incidencia, formulario de resolución y de «pendiente de actuación».
-import { S, rpc, esc, num, fmtDT, fmtMin, since, urgPill, stPill, shell, flash, guard, staff, route, STATUS, OPEN,
-  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.9';
+import { warnBox, S, rpc, esc, num, fmtDT, fmtMin, since, urgPill, stPill, shell, flash, guard, staff, route, STATUS, OPEN,
+  PAUSE_LABEL, RES_LABEL, EQ_LABEL, compressImage, uploadPhotos, signedUrls, toLocalInput, fromLocalInput } from './app.js?v=2026-10-08.10';
 
 const act = (fn, btn) => guard(async () => { await fn(); await route(); }, btn);
 const done = (msg, kind = 'ok') => sessionStorage.setItem('flash', JSON.stringify([msg, kind]));
@@ -176,7 +176,7 @@ function wireResolve(id) {
   const eqs = f.querySelectorAll('input[name=eq]'), obs = document.getElementById('obs-wrap'), no = document.getElementById('no-wrap'), send = document.getElementById('send');
   const sync = () => { const v = f.querySelector('input[name=eq]:checked')?.value; obs.hidden = v !== 'SI_OBSERVACIONES'; no.hidden = v !== 'NO'; send.hidden = v === 'NO'; };
   eqs.forEach(e => e.onchange = sync);
-  document.getElementById('go-pend').onclick = () => { const t = f.pending.value.trim(); if (t.length < 5) { f.pending.focus(); return alert('Indica qué queda pendiente.'); }
+  document.getElementById('go-pend').onclick = () => { const t = f.pending.value.trim(); if (t.length < 5) { f.pending.focus(); return warnBox('No has indicado qué queda pendiente. Escríbelo en el cuadro «¿Qué queda pendiente?» para poder dejarla pendiente de actuación.'); }
     sessionStorage.setItem('pause_prefill', t); location.hash = `#/incidencia/${id}/pendiente`; };
   const prev = document.getElementById('previews');
   const paint = () => { prev.innerHTML = ''; files.forEach((fl, k) => { const dv = document.createElement('div'); dv.className = 'pv'; const im = document.createElement('img'); im.src = URL.createObjectURL(fl); im.alt = 'Vista previa';
@@ -189,13 +189,13 @@ function wireResolve(id) {
   f.onsubmit = async e => {
     e.preventDefault(); if (busy) return;
     const type = f.querySelector('input[name=type]:checked')?.value, eq = f.querySelector('input[name=eq]:checked')?.value, work = f.work.value.trim(), notes = f.notes.value.trim();
-    if (!type) return alert('Indica cómo se ha resuelto.');
-    if (work.length < 5) { f.work.focus(); return alert('Describe el trabajo realizado.'); }
-    if (!eq) return alert('Indica si el equipo queda operativo.');
-    if (eq === 'SI_OBSERVACIONES' && notes.length < 3) { f.notes.focus(); return alert('Indica las observaciones del equipo.'); }
+    if (!type) return warnBox('No has indicado cómo se ha resuelto. Elige una de las opciones (reparación, sustitución de pieza, ajuste…).');
+    if (work.length < 5) { f.work.focus(); return warnBox('Falta el trabajo realizado. Explica qué has hecho para resolver la incidencia (mínimo 5 letras).'); }
+    if (!eq) return warnBox('No has indicado si el equipo queda operativo. Elige Sí, Sí con observaciones o No.');
+    if (eq === 'SI_OBSERVACIONES' && notes.length < 3) { f.notes.focus(); return warnBox('Has marcado «Sí, pero con observaciones» y no has escrito ninguna. Escribe qué hay que vigilar.'); }
     const materials = [...mats.querySelectorAll('.matrow')].map(r => ({ name: r.querySelector('[name=m_name]').value.trim(), quantity: num(r.querySelector('[name=m_qty]').value.replace(',', '.')),
       unit: r.querySelector('[name=m_unit]').value, notes: r.querySelector('[name=m_notes]').value, unit_cost: num(r.dataset.cost) })).filter(m => m.name);
-    if (materials.some(m => !(m.quantity > 0))) return alert('Revisa la cantidad de los materiales.');
+    if (materials.some(m => !(m.quantity > 0))) return warnBox('La cantidad de algún material no es válida. Debe ser un número mayor que 0.');
     const minutes = f.hours ? (num(f.hours.value) || 0) * 60 + (num(f.minutes.value) || 0) : null;
     send.disabled = true; send.textContent = 'Guardando…';
     try {
@@ -217,8 +217,8 @@ export async function viewPause(id) {
     <label>Fecha prevista de actuación (opcional)<input type="date" name="expected"></label><label>Observaciones<textarea name="obs" rows="2"></textarea></label></section>
   <button class="btn btn-xl btn-hold" id="send">DEJAR PENDIENTE DE ACTUACIÓN</button></form>`);
   return { html, after: () => { const f = document.getElementById('fpause'); f.onsubmit = e => { e.preventDefault();
-    const reason = f.querySelector('input[name=reason]:checked')?.value; if (!reason) return alert('Selecciona el motivo.');
-    if (f.detail.value.trim().length < 5) { f.detail.focus(); return alert('Indica el detalle / próxima actuación.'); }
+    const reason = f.querySelector('input[name=reason]:checked')?.value; if (!reason) return warnBox('No has elegido el motivo. Selecciona por qué queda pendiente (falta material, técnico externo…).');
+    if (f.detail.value.trim().length < 5) { f.detail.focus(); return warnBox('Falta el detalle. Explica qué queda por hacer y cuándo se retomará (mínimo 5 letras).'); }
     guard(async () => { await rpc('pause_incident', { p_id: Number(id), p_reason: reason, p_detail: f.detail.value, p_expected: f.expected.value || null, p_obs: f.obs.value });
       done('Incidencia pendiente de actuación. Podrás retomarla cuando quieras.'); location.hash = '#/incidencia/' + id; }, document.getElementById('send')); }; } };
 }
