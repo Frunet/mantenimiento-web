@@ -158,7 +158,9 @@ details summary{cursor:pointer;font-weight:600}
 @media(min-width:760px){.tiles5{grid-template-columns:repeat(5,1fr)}.actions-big.two{grid-template-columns:1fr 1fr}.matrow{grid-template-columns:2fr 90px 90px 2fr auto}.matrow input:first-child,.matrow input:nth-child(4){grid-column:auto}}
 
 /* Prevención: tabla de proyectos */
-.tprev{min-width:640px}.tprev th:nth-child(1){width:24%}.tprev th:nth-child(2){width:14%}.tprev th:nth-child(3){width:16%}
+.tprev{min-width:980px}.tprev th:nth-child(1){width:16%}.tprev th:nth-child(2){width:10%}.tprev th:nth-child(3){width:7%}.tprev th:nth-child(6){width:12%}.tprev th:nth-child(7){width:9%}
+.tprev tr.prev-over td:first-child{box-shadow:inset 4px 0 0 #c9302c}.tprev tr.prev-soon td:first-child{box-shadow:inset 4px 0 0 #e0a100}
+.pfilter{align-items:center}.pfilter input[type=search],.pfilter select{flex:1 1 150px;min-width:0}
 .tprev td{vertical-align:top;overflow-wrap:anywhere}.tprev td.obs{white-space:pre-wrap;min-width:240px}
 .btn-danger{color:var(--danger);border-color:var(--danger)}
 

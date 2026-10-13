@@ -1,6 +1,6 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { USE_MATERIALS } from '../config.js?v=2026-10-08.13';
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL } from './app.js?v=2026-10-08.13';
+import { USE_MATERIALS } from '../config.js?v=2026-10-08.14';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL, warnBox } from './app.js?v=2026-10-08.14';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -53,30 +53,73 @@ async function viewEquipoForm(id) {
 }
 
 // ============================================================ PREVENTIVO (tabla de proyectos)
-// Cuatro columnas de texto libre: Proyecto · Estado · Fecha prevista · Observaciones.
+// Proyecto · Estado · Prioridad · Máquina · Responsable · Fecha prevista / límite · Material · Observaciones.
 // Estados de los proyectos: los mismos nombres y colores que las incidencias.
 const PSTATES = [['Pendiente', 'st-PENDIENTE'], ['Asignada', 'st-ASIGNADA'], ['En proceso', 'st-EN_PROCESO'], ['Pendiente de actuación', 'st-PENDIENTE_ACTUACION'], ['Finalizada', 'st-RESUELTA']];
+const PRIO = { BAJA: 'Baja', MEDIA: 'Media', ALTA: 'Alta' };
+const PMAT = { SIN_MATERIAL: 'Sin material necesario', SOLICITADO: 'Solicitado', RECIBIDO: 'Recibido' };
 const stateCell = s => { const m = PSTATES.find(([n]) => n.toLowerCase() === String(s).trim().toLowerCase()); return m ? `<span class="pill ${m[1]}">${esc(m[0])}</span>` : esc(s); };
+const fmtPrevDay = d => d ? d.split('-').reverse().join('/') : '';
+let PFILTER = { q: '', status: '', equip: '', resp: '', over: false };
 async function viewPreventivo() {
-  need(staff()); const rows = await rpc('list_projects');
-  const badge = r => r.days_left == null ? '' : r.days_left < 0 ? `<br><span class="pill urg-CRITICA">Vencido hace ${-r.days_left} d</span>` : r.days_left <= 3 ? `<br><span class="pill urg-ALTA">${r.days_left === 0 ? 'Vence hoy' : 'Vence en ' + r.days_left + ' d'}</span>` : '';
-  return shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo proyecto</a></div>
-  <p class="muted">Pulsa una fila para editarla o eliminarla.</p>
-  <div class="tablewrap"><table class="table tprev"><thead><tr><th>Proyecto</th><th>Estado</th><th>Fecha prevista</th><th>Observaciones</th></tr></thead><tbody>
-  ${rows.map(r => `<tr class="clickable" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong></td><td>${stateCell(r.status)}</td><td>${esc(r.expected_date || '')}${badge(r)}</td><td class="obs">${esc(r.observations || '')}</td></tr>`).join('')
-    || '<tr><td colspan="4" class="center muted">Todavía no hay proyectos. Pulsa «Nuevo proyecto».</td></tr>'}</tbody></table></div>`);
+  need(staff()); const rows = await rpc('list_projects'), resp = await rpc('list_responsables');
+  // rojo: vencida y no finalizada · ámbar: vence en los próximos 7 días
+  const badge = r => r.days_left == null ? '' : r.days_left < 0 ? `<br><span class="pill urg-CRITICA">Vencido hace ${-r.days_left} d</span>` : r.days_left <= 7 ? `<br><span class="pill urg-MEDIA">${r.days_left === 0 ? 'Vence hoy' : 'Vence en ' + r.days_left + ' d'}</span>` : '';
+  const rowCls = r => r.days_left == null ? '' : r.days_left < 0 ? ' prev-over' : r.days_left <= 7 ? ' prev-soon' : '';
+  const tr = r => `<tr class="clickable${rowCls(r)}" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong></td><td>${stateCell(r.status)}</td>
+    <td>${r.priority ? `<span class="pill urg-${r.priority}">${PRIO[r.priority]}</span>` : ''}</td><td>${esc(r.equipment_name || '')}</td><td>${esc(r.responsible_name || '')}</td>
+    <td>${r.deadline ? `<strong>${fmtPrevDay(r.deadline)}</strong>` : ''}${r.deadline && r.expected_date ? '<br>' : ''}${r.expected_date ? `<span class="${r.deadline ? 'muted' : ''}">${esc(r.expected_date)}</span>` : ''}${badge(r)}</td>
+    <td>${r.material_status ? esc(PMAT[r.material_status]) : ''}</td><td class="obs">${esc(r.observations || '')}</td></tr>`;
+  const eqs = [...new Map(rows.filter(r => r.equipment_name).map(r => [r.equipment_name, r.equipment_name])).values()].sort();
+  const opts = (list, val) => list.map(([k, v]) => `<option value="${esc(k)}" ${String(PFILTER[val]) === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  return { html: shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo proyecto</a></div>
+  <form id="pfilter" class="card row gap wrap pfilter" onsubmit="return false">
+    <input type="search" id="pf-q" placeholder="🔍 Buscar…" value="${esc(PFILTER.q)}">
+    <select id="pf-status"><option value="">Todos los estados</option>${opts(PSTATES.map(([n]) => [n, n]), 'status')}</select>
+    <select id="pf-equip"><option value="">Todas las máquinas</option>${opts(eqs.map(n => [n, n]), 'equip')}</select>
+    <select id="pf-resp"><option value="">Todos los responsables</option>${opts(resp.map(u => [u.id, u.name]), 'resp')}</select>
+    <label class="check"><input type="checkbox" id="pf-over" ${PFILTER.over ? 'checked' : ''}> Solo vencidas</label>
+    <button type="button" class="btn" id="pf-clear">Limpiar</button></form>
+  <p class="muted" id="pf-count">Pulsa una fila para editarla o eliminarla.</p>
+  <div class="tablewrap"><table class="table tprev"><thead><tr><th>Proyecto</th><th>Estado</th><th>Prioridad</th><th>Máquina</th><th>Responsable</th><th>Fecha prevista / límite</th><th>Material</th><th>Observaciones</th></tr></thead><tbody id="pf-body"></tbody></table></div>`),
+    after: () => {
+      const g = id => document.getElementById(id), body = g('pf-body');
+      const paint = () => {
+        PFILTER = { q: g('pf-q').value, status: g('pf-status').value, equip: g('pf-equip').value, resp: g('pf-resp').value, over: g('pf-over').checked };
+        const q = PFILTER.q.trim().toLowerCase();
+        const list = rows.filter(r => (!PFILTER.status || r.status.trim().toLowerCase() === PFILTER.status.toLowerCase()) && (!PFILTER.equip || r.equipment_name === PFILTER.equip)
+          && (!PFILTER.resp || r.responsible_id === PFILTER.resp) && (!PFILTER.over || (r.days_left != null && r.days_left < 0))
+          && (!q || [r.project, r.observations, r.expected_date, r.equipment_name, r.responsible_name].some(v => String(v || '').toLowerCase().includes(q))));
+        body.innerHTML = list.map(tr).join('') || `<tr><td colspan="8" class="center muted">${rows.length ? 'Ningún proyecto coincide con los filtros.' : 'Todavía no hay proyectos. Pulsa «Nuevo proyecto».'}</td></tr>`;
+        g('pf-count').textContent = rows.length ? `${list.length} de ${rows.length} proyectos. Pulsa una fila para editarla o eliminarla.` : 'Pulsa una fila para editarla o eliminarla.';
+      };
+      ['pf-q', 'pf-status', 'pf-equip', 'pf-resp', 'pf-over'].forEach(id => { g(id).oninput = paint; g(id).onchange = paint; });
+      g('pf-clear').onclick = () => { g('pf-q').value = ''; g('pf-status').value = ''; g('pf-equip').value = ''; g('pf-resp').value = ''; g('pf-over').checked = false; paint(); };
+      paint();
+    } };
 }
 async function viewProyectoForm(id) {
-  need(staff()); const rows = await rpc('list_projects'), r = id ? rows.find(x => String(x.id) === String(id)) : {}; if (id && !r) throw new Error('Registro no encontrado.');
+  need(staff()); const [rows, resp] = await Promise.all([rpc('list_projects'), rpc('list_responsables')]), r = id ? rows.find(x => String(x.id) === String(id)) : {}; if (id && !r) throw new Error('Registro no encontrado.');
+  const eqv = r.equipment_id ? String(r.equipment_id) : (r.equipment_other ? 'otros' : '');
+  const sel = (name, label, list, cur, empty = '—') => `<label>${label}<select name="${name}"><option value="">${empty}</option>${list.map(([k, v]) => `<option value="${esc(k)}" ${String(cur ?? '') === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
   return { html: shell(`${back('#/preventivo', 'Preventivo')}<h1>${id ? 'Editar proyecto' : 'Nuevo proyecto'}</h1><form id="fproj" class="card stack">
   <label>Proyecto<input name="project" value="${esc(r.project || '')}" required maxlength="200" placeholder="Cortadora-Empujador Rodaja"></label>
+  <div class="grid-form">
   <label>Estado<select name="status" required>${(r.status && !PSTATES.some(([n]) => n.toLowerCase() === r.status.trim().toLowerCase()) ? `<option value="${esc(r.status)}" selected>${esc(r.status)} (estado actual)</option>` : '')}${PSTATES.map(([n]) => `<option value="${n}" ${r.status && r.status.trim().toLowerCase() === n.toLowerCase() ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+  ${sel('priority', 'Prioridad', Object.entries(PRIO), r.priority)}
+  <label>Máquina / equipo<select name="equipment_id" id="pj-eq"><option value="">—</option>${S.ref.equipment.map(e => `<option value="${e.id}" ${eqv === String(e.id) ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}<option value="otros" ${eqv === 'otros' ? 'selected' : ''}>Otros (escribir)…</option></select>
+    <input name="equipment_other" id="pj-eqo" maxlength="120" placeholder="Escribe la máquina o equipo" value="${esc(r.equipment_other || '')}" ${eqv === 'otros' ? '' : 'hidden'} style="margin-top:.4rem"></label>
+  ${sel('responsible_id', 'Responsable', resp.map(u => [u.id, u.name]), r.responsible_id)}
+  <label>Fecha límite<input type="date" name="deadline" value="${esc(r.deadline || '')}"></label>
+  ${sel('material_status', 'Material', Object.entries(PMAT), r.material_status)}</div>
   <label>Fecha prevista<input name="expected_date" value="${esc(r.expected_date || '')}" maxlength="100" placeholder="Final Octubre"></label>
-  <small class="muted" style="margin-top:-.4rem">Puede ser una fecha («15/11/2026») o un texto aproximado («Final Octubre»). Si se reconoce una fecha o un mes, se avisa cuando se acerca o vence.</small>
+  <small class="muted" style="margin-top:-.4rem">Texto libre («15/11/2026», «Final Octubre»). La fecha límite, si la pones, manda para los avisos y los colores de plazo; si no, se usa la fecha prevista cuando se reconoce.</small>
   <label>Observaciones<textarea name="observations" rows="5" maxlength="4000" placeholder="Solicitado Nylon y cuchillas para su posterior cambio.">${esc(r.observations || '')}</textarea></label>
   <div class="row gap wrap"><button class="btn btn-primary">Guardar</button><a class="btn" href="#/preventivo">Cancelar</a>${id ? '<button class="btn btn-danger" type="button" id="del" style="margin-left:auto">🗑 Eliminar</button>' : ''}</div></form>`),
-    after: () => { const f = document.getElementById('fproj');
+    after: () => { const f = document.getElementById('fproj'), eq = document.getElementById('pj-eq'), eqo = document.getElementById('pj-eqo');
+      eq.onchange = () => { eqo.hidden = eq.value !== 'otros'; if (!eqo.hidden) eqo.focus(); };
       f.onsubmit = ev => { ev.preventDefault(); const o = form2obj(f); if (id) o.id = Number(id);
+        if (o.equipment_id === 'otros') { o.equipment_id = ''; if (!(o.equipment_other || '').trim()) return warnBox('Has elegido «Otros» en Máquina / equipo. Escribe cuál es en el campo que aparece debajo.', () => eqo.focus()); } else o.equipment_other = '';
         act(async () => { await rpc('save_project', { p: o }); done(id ? 'Proyecto guardado.' : 'Proyecto creado.'); }, f.querySelector('button.btn-primary'), '#/preventivo'); };
       const del = document.getElementById('del');
       if (del) del.onclick = () => { if (confirm('¿Eliminar este proyecto? No se puede deshacer.')) act(async () => { await rpc('delete_project', { p_id: Number(id) }); done('Proyecto eliminado.'); }, del, '#/preventivo'); }; } };
@@ -237,7 +280,7 @@ export async function dispatch(parts, q) {
   try {
     if (a === 'equipos') return wrap(await viewEquipos());
     if (a === 'equipo') { if (b === 'nuevo') return await viewEquipoForm(null); if (c === 'editar') return await viewEquipoForm(b); return wrap(await viewEquipo(b)); }
-    if (a === 'preventivo') { if (!b) return wrap(await viewPreventivo()); if (b === 'nuevo') return await viewProyectoForm(null); if (c === 'editar') return await viewProyectoForm(b); return wrap(await viewPreventivo()); }
+    if (a === 'preventivo') { if (!b) return await viewPreventivo(); if (b === 'nuevo') return await viewProyectoForm(null); if (c === 'editar') return await viewProyectoForm(b); return await viewPreventivo(); }
     if (a === 'estadisticas') return await viewStats(q);
     if (a === 'informes') return await viewReport(q);
     if (a === 'admin') { need(isAdmin());
