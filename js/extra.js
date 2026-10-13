@@ -1,6 +1,6 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { USE_MATERIALS } from '../config.js?v=2026-10-08.15';
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL, warnBox } from './app.js?v=2026-10-08.15';
+import { USE_MATERIALS } from '../config.js?v=2026-10-08.16';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL, warnBox, compressImage } from './app.js?v=2026-10-08.16';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -60,6 +60,8 @@ const PRIO = { BAJA: 'Baja', MEDIA: 'Media', ALTA: 'Alta' };
 const PMAT = { SIN_MATERIAL: 'Sin material necesario', SOLICITADO: 'Solicitado', RECIBIDO: 'Recibido' };
 const stateCell = s => { const m = PSTATES.find(([n]) => n.toLowerCase() === String(s).trim().toLowerCase()); return m ? `<span class="pill ${m[1]}">${esc(m[0])}</span>` : esc(s); };
 const fmtPrevDay = d => d ? d.split('-').reverse().join('/') : '';
+const PUNIT = { DIA: 'días', SEMANA: 'semanas', MES: 'meses' };
+const fmtFin = v => v ? new Date(v).toLocaleDateString('es-ES', { timeZone: 'Europe/Madrid' }) : '';
 const cnt = (l, n, d, cls = '') => `<div class="kpi ${cls}"><span class="kl">${l}</span><b>${n}</b><span class="kd muted">${d}</span></div>`;
 let PFILTER = { q: '', status: '', equip: '', resp: '', over: false };
 async function viewPreventivo() {
@@ -67,9 +69,9 @@ async function viewPreventivo() {
   // rojo: vencida y no finalizada · ámbar: vence en los próximos 7 días
   const badge = r => r.days_left == null ? '' : r.days_left < 0 ? `<br><span class="pill urg-CRITICA">Vencido hace ${-r.days_left} d</span>` : r.days_left <= 7 ? `<br><span class="pill urg-MEDIA">${r.days_left === 0 ? 'Vence hoy' : 'Vence en ' + r.days_left + ' d'}</span>` : '';
   const rowCls = r => r.days_left == null ? '' : r.days_left < 0 ? ' prev-over' : r.days_left <= 7 ? ' prev-soon' : '';
-  const tr = r => `<tr class="clickable${rowCls(r)}" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong></td><td>${stateCell(r.status)}</td>
+  const tr = r => `<tr class="clickable${rowCls(r)}" onclick="location.hash='#/preventivo/${r.id}/editar'"><td><strong>${esc(r.project)}</strong>${r.n_files ? ` <span class="muted" title="Archivos adjuntos">📎${r.n_files}</span>` : ''}${r.period_value ? ` <span class="muted" title="Cada ${r.period_value} ${PUNIT[r.period_unit]}">🔁</span>` : ''}</td><td>${stateCell(r.status)}</td>
     <td>${r.priority ? `<span class="pill urg-${r.priority}">${PRIO[r.priority]}</span>` : ''}</td><td>${esc(r.equipment_name || '')}</td><td>${esc(r.responsible_name || '')}</td>
-    <td>${r.deadline ? `<strong>${fmtPrevDay(r.deadline)}</strong>` : ''}${r.deadline && r.expected_date ? '<br>' : ''}${r.expected_date ? `<span class="${r.deadline ? 'muted' : ''}">${esc(r.expected_date)}</span>` : ''}${badge(r)}</td>
+    <td>${r.deadline ? `<strong>${fmtPrevDay(r.deadline)}</strong>` : ''}${r.deadline && r.expected_date ? '<br>' : ''}${r.expected_date ? `<span class="${r.deadline ? 'muted' : ''}">${esc(r.expected_date)}</span>` : ''}${badge(r)}${r.finished && r.finished_at ? `<br><small class="muted">Finalizada el ${fmtFin(r.finished_at)}</small>` : ''}</td>
     <td>${r.material_status ? esc(PMAT[r.material_status]) : ''}</td><td class="obs">${esc(r.observations || '')}</td></tr>`;
   const eqs = [...new Map(rows.filter(r => r.equipment_name).map(r => [r.equipment_name, r.equipment_name])).values()].sort();
   const opts = (list, val) => list.map(([k, v]) => `<option value="${esc(k)}" ${String(PFILTER[val]) === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('');
@@ -100,14 +102,16 @@ async function viewPreventivo() {
       ['pf-q', 'pf-status', 'pf-equip', 'pf-resp', 'pf-over'].forEach(id => { g(id).oninput = paint; g(id).onchange = paint; });
       g('pf-clear').onclick = () => { g('pf-q').value = ''; g('pf-status').value = ''; g('pf-equip').value = ''; g('pf-resp').value = ''; g('pf-over').checked = false; paint(); };
       g('pf-xlsx').onclick = e => guard(async () => { const day = new Date().toISOString().slice(0, 10);
-        await saveTable('xlsx', 'prevencion_' + day, { Prevención: [['Proyecto', 'Estado', 'Prioridad', 'Máquina', 'Responsable', 'Fecha límite', 'Fecha prevista', 'Material', 'Observaciones', 'Plazo (días)'],
-          ...shown.map(r => [r.project, r.status, PRIO[r.priority] || '', r.equipment_name || '', r.responsible_name || '', fmtPrevDay(r.deadline), r.expected_date || '', PMAT[r.material_status] || '', r.observations || '', r.days_left ?? ''])] }); }, e.currentTarget);
+        await saveTable('xlsx', 'prevencion_' + day, { Prevención: [['Proyecto', 'Estado', 'Prioridad', 'Máquina', 'Responsable', 'Fecha límite', 'Fecha prevista', 'Material', 'Observaciones', 'Plazo (días)', 'Periodicidad', 'Finalizada el'],
+          ...shown.map(r => [r.project, r.status, PRIO[r.priority] || '', r.equipment_name || '', r.responsible_name || '', fmtPrevDay(r.deadline), r.expected_date || '', PMAT[r.material_status] || '', r.observations || '', r.days_left ?? '', r.period_value ? `Cada ${r.period_value} ${PUNIT[r.period_unit]}` : '', fmtFin(r.finished && r.finished_at)])] }); }, e.currentTarget);
       g('pf-pdf').onclick = () => { const t = document.title; document.title = 'Prevención ' + new Date().toISOString().slice(0, 10); window.onafterprint = () => { document.title = t; window.onafterprint = null; }; print(); };
       paint();
     } };
 }
 async function viewProyectoForm(id) {
   need(staff()); const [rows, resp] = await Promise.all([rpc('list_projects'), rpc('list_responsables')]), r = id ? rows.find(x => String(x.id) === String(id)) : {}; if (id && !r) throw new Error('Registro no encontrado.');
+  const [hist, files] = id ? await Promise.all([rpc('project_history', { p_id: Number(id) }), rpc('list_project_files', { p_id: Number(id) })]) : [[], []];
+  const urls = {}; if (files.length) { const { data } = await sb.storage.from('project-files').createSignedUrls(files.map(f => f.path), 3600); (data || []).forEach(d => { if (d.signedUrl) urls[d.path] = d.signedUrl; }); }
   const eqv = r.equipment_id ? String(r.equipment_id) : (r.equipment_other ? 'otros' : '');
   const sel = (name, label, list, cur, empty = '—') => `<label>${label}<select name="${name}"><option value="">${empty}</option>${list.map(([k, v]) => `<option value="${esc(k)}" ${String(cur ?? '') === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>`;
   return { html: shell(`${back('#/preventivo', 'Preventivo')}<h1>${id ? 'Editar proyecto' : 'Nuevo proyecto'}</h1><form id="fproj" class="card stack">
@@ -123,14 +127,29 @@ async function viewProyectoForm(id) {
   <label>Fecha prevista<input name="expected_date" value="${esc(r.expected_date || '')}" maxlength="100" placeholder="Final Octubre"></label>
   <small class="muted" style="margin-top:-.4rem">Texto libre («15/11/2026», «Final Octubre»). La fecha límite, si la pones, manda para los avisos y los colores de plazo; si no, se usa la fecha prevista cuando se reconoce.</small>
   <label>Observaciones<textarea name="observations" rows="5" maxlength="4000" placeholder="Solicitado Nylon y cuchillas para su posterior cambio.">${esc(r.observations || '')}</textarea></label>
+  <div class="card stack" style="background:#f6f8fa"><strong>🔁 Periodicidad <small class="muted">(opcional)</small></strong>
+    <div class="row gap wrap"><span>Cada</span><input type="number" name="period_value" min="1" max="999" value="${esc(r.period_value ?? '')}" style="width:5.5rem"><select name="period_unit" style="width:auto">${Object.entries(PUNIT).map(([k, v]) => `<option value="${k}" ${r.period_unit === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+    <small class="muted">Al marcar este proyecto como «Finalizada» se creará automáticamente el siguiente, en estado «Pendiente» y con la nueva fecha límite (la fecha límite actual más el periodo; si ya estaba pasada, desde hoy).</small></div>
+  <div class="card stack" style="background:#f6f8fa"><strong>📎 Adjuntos <small class="muted">(fotos o PDF, máx. 10 por registro y 10 MB cada uno)</small></strong>
+    ${files.length ? `<ul class="pfiles">${files.map(f => `<li>${f.mime === 'application/pdf' || !urls[f.path] ? '📄' : `<a href="${esc(urls[f.path])}" target="_blank" rel="noopener"><img src="${esc(urls[f.path])}" alt="" loading="lazy"></a>`} ${urls[f.path] ? `<a href="${esc(urls[f.path])}" target="_blank" rel="noopener">${esc(f.name)}</a>` : esc(f.name)} <small class="muted">${esc(f.user || '')}</small> <button type="button" class="btn btn-danger" data-delfile="${f.id}" style="padding:.15rem .5rem">✕</button></li>`).join('')}</ul>` : '<small class="muted">Sin adjuntos.</small>'}
+    <input type="file" id="pj-files" accept="image/*,application/pdf" multiple></div>
+  ${id ? `<div class="card stack" style="background:#f6f8fa"><strong>🕘 Historial</strong>${r.finished && r.finished_at ? `<small>✅ Finalizada el ${fmtFin(r.finished_at)}</small>` : ''}${hist.length ? `<ul class="phist">${hist.map(h => `<li><small class="muted">${new Date(h.at).toLocaleString('es-ES', { timeZone: 'Europe/Madrid', dateStyle: 'short', timeStyle: 'short' })}</small> · <strong>${esc(h.user || '—')}</strong> · ${h.from || h.to ? `${h.from ? esc(h.from) + ' → ' : ''}${esc(h.to || '')}` : ''}${h.note ? ` <span class="muted">${esc(h.note)}</span>` : ''}</li>`).join('')}</ul>` : '<small class="muted">Sin movimientos registrados.</small>'}</div>` : ''}
   <div class="row gap wrap"><button class="btn btn-primary">Guardar</button><a class="btn" href="#/preventivo">Cancelar</a>${id ? '<button class="btn btn-danger" type="button" id="del" style="margin-left:auto">🗑 Eliminar</button>' : ''}</div></form>`),
     after: () => { const f = document.getElementById('fproj'), eq = document.getElementById('pj-eq'), eqo = document.getElementById('pj-eqo');
       eq.onchange = () => { eqo.hidden = eq.value !== 'otros'; if (!eqo.hidden) eqo.focus(); };
       f.onsubmit = ev => { ev.preventDefault(); const o = form2obj(f); if (id) o.id = Number(id);
         if (o.equipment_id === 'otros') { o.equipment_id = ''; if (!(o.equipment_other || '').trim()) return warnBox('Has elegido «Otros» en Máquina / equipo. Escribe cuál es en el campo que aparece debajo.', () => eqo.focus()); } else o.equipment_other = '';
-        act(async () => { await rpc('save_project', { p: o }); done(id ? 'Proyecto guardado.' : 'Proyecto creado.'); }, f.querySelector('button.btn-primary'), '#/preventivo'); };
+        const pend = [...document.getElementById('pj-files').files];
+        if (pend.length + files.length > 10) return warnBox('Cada registro admite como máximo 10 adjuntos. Ya tiene ' + files.length + '.');
+        if (pend.some(x => x.size > 10 * 1024 * 1024 && !x.type.startsWith('image/'))) return warnBox('Un archivo supera los 10 MB. Reduce su tamaño o usa otro.');
+        act(async () => { const res = await rpc('save_project', { p: o });
+          if (pend.length) { const reg = []; for (const x of pend) { const fx = x.type.startsWith('image/') ? await compressImage(x) : x; const ext = (fx.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5) || 'bin'; const path = `${res.id}/${crypto.randomUUID()}.${ext}`;
+            const { error } = await sb.storage.from('project-files').upload(path, fx, { contentType: fx.type || 'application/octet-stream', upsert: false }); if (error) throw new Error('No se pudo subir «' + x.name + '»: ' + error.message);
+            reg.push({ path, name: x.name, mime: fx.type, size: fx.size }); } await rpc('register_project_files', { p_id: res.id, p_files: reg }); }
+          done(res.next_id ? `Proyecto finalizado. Se ha creado el siguiente con fecha límite ${fmtPrevDay(res.next_deadline)}.` : id ? 'Proyecto guardado.' : 'Proyecto creado.'); }, f.querySelector('button.btn-primary'), '#/preventivo'); };
+      f.querySelectorAll('[data-delfile]').forEach(b => b.onclick = () => { if (confirm('¿Quitar este adjunto?')) act(async () => { const path = await rpc('delete_project_file', { p_file_id: Number(b.dataset.delfile) }); await sb.storage.from('project-files').remove([path]); done('Adjunto eliminado.'); }, b, '#/preventivo/' + id + '/editar'); });
       const del = document.getElementById('del');
-      if (del) del.onclick = () => { if (confirm('¿Eliminar este proyecto? No se puede deshacer.')) act(async () => { await rpc('delete_project', { p_id: Number(id) }); done('Proyecto eliminado.'); }, del, '#/preventivo'); }; } };
+      if (del) del.onclick = () => { if (confirm('¿Eliminar este proyecto? No se puede deshacer.')) act(async () => { if (files.length) await sb.storage.from('project-files').remove(files.map(x => x.path)); await rpc('delete_project', { p_id: Number(id) }); done('Proyecto eliminado.'); }, del, '#/preventivo'); }; } };
 }
 
 // ============================================================ ESTADÍSTICAS
