@@ -1,6 +1,6 @@
 // Pantallas de Mantenimiento y Administración: equipos, preventivo, estadísticas, informes, exportación y administración.
-import { USE_MATERIALS } from '../config.js?v=2026-10-08.14';
-import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL, warnBox } from './app.js?v=2026-10-08.14';
+import { USE_MATERIALS } from '../config.js?v=2026-10-08.15';
+import { S, rpc, esc, num, fmtDT, fmtMin, urgPill, stPill, shell, flash, guard, staff, route, URG, STATUS, sb, RES_LABEL, EQ_LABEL, warnBox } from './app.js?v=2026-10-08.15';
 
 const bars = (items, color = 'var(--primary)') => {
   const mx = Math.max(0, ...items.map(i => Number(i[1])));
@@ -60,6 +60,7 @@ const PRIO = { BAJA: 'Baja', MEDIA: 'Media', ALTA: 'Alta' };
 const PMAT = { SIN_MATERIAL: 'Sin material necesario', SOLICITADO: 'Solicitado', RECIBIDO: 'Recibido' };
 const stateCell = s => { const m = PSTATES.find(([n]) => n.toLowerCase() === String(s).trim().toLowerCase()); return m ? `<span class="pill ${m[1]}">${esc(m[0])}</span>` : esc(s); };
 const fmtPrevDay = d => d ? d.split('-').reverse().join('/') : '';
+const cnt = (l, n, d, cls = '') => `<div class="kpi ${cls}"><span class="kl">${l}</span><b>${n}</b><span class="kd muted">${d}</span></div>`;
 let PFILTER = { q: '', status: '', equip: '', resp: '', over: false };
 async function viewPreventivo() {
   need(staff()); const rows = await rpc('list_projects'), resp = await rpc('list_responsables');
@@ -72,7 +73,8 @@ async function viewPreventivo() {
     <td>${r.material_status ? esc(PMAT[r.material_status]) : ''}</td><td class="obs">${esc(r.observations || '')}</td></tr>`;
   const eqs = [...new Map(rows.filter(r => r.equipment_name).map(r => [r.equipment_name, r.equipment_name])).values()].sort();
   const opts = (list, val) => list.map(([k, v]) => `<option value="${esc(k)}" ${String(PFILTER[val]) === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('');
-  return { html: shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo proyecto</a></div>
+  return { html: shell(`<div class="row between wrap"><h1>Mantenimiento preventivo</h1><span class="row gap wrap"><button class="btn" type="button" id="pf-xlsx">⬇ Excel</button><button class="btn" type="button" id="pf-pdf">🖨 PDF</button><a class="btn btn-primary" href="#/preventivo/nuevo">＋ Nuevo proyecto</a></span></div>
+  <div class="kpis">${cnt('Pendientes', rows.filter(r => !r.finished && /^(pendiente|asignada)/i.test(r.status.trim())).length, 'Pendiente, asignada o pendiente de actuación')}${cnt('En curso', rows.filter(r => !r.finished && /^en proceso/i.test(r.status.trim())).length, 'En proceso')}${cnt('Vencidas', rows.filter(r => r.days_left != null && r.days_left < 0).length, 'Plazo superado', 'kpi-red')}${cnt('Esperando material', rows.filter(r => !r.finished && r.material_status === 'SOLICITADO').length, 'Material solicitado', 'kpi-amber')}</div>
   <form id="pfilter" class="card row gap wrap pfilter" onsubmit="return false">
     <input type="search" id="pf-q" placeholder="🔍 Buscar…" value="${esc(PFILTER.q)}">
     <select id="pf-status"><option value="">Todos los estados</option>${opts(PSTATES.map(([n]) => [n, n]), 'status')}</select>
@@ -81,20 +83,26 @@ async function viewPreventivo() {
     <label class="check"><input type="checkbox" id="pf-over" ${PFILTER.over ? 'checked' : ''}> Solo vencidas</label>
     <button type="button" class="btn" id="pf-clear">Limpiar</button></form>
   <p class="muted" id="pf-count">Pulsa una fila para editarla o eliminarla.</p>
-  <div class="tablewrap"><table class="table tprev"><thead><tr><th>Proyecto</th><th>Estado</th><th>Prioridad</th><th>Máquina</th><th>Responsable</th><th>Fecha prevista / límite</th><th>Material</th><th>Observaciones</th></tr></thead><tbody id="pf-body"></tbody></table></div>`),
+  <div class="tablewrap prev-print"><table class="table tprev"><thead><tr><th>Proyecto</th><th>Estado</th><th>Prioridad</th><th>Máquina</th><th>Responsable</th><th>Fecha prevista / límite</th><th>Material</th><th>Observaciones</th></tr></thead><tbody id="pf-body"></tbody></table></div>`),
     after: () => {
       const g = id => document.getElementById(id), body = g('pf-body');
+      let shown = rows;
       const paint = () => {
         PFILTER = { q: g('pf-q').value, status: g('pf-status').value, equip: g('pf-equip').value, resp: g('pf-resp').value, over: g('pf-over').checked };
         const q = PFILTER.q.trim().toLowerCase();
         const list = rows.filter(r => (!PFILTER.status || r.status.trim().toLowerCase() === PFILTER.status.toLowerCase()) && (!PFILTER.equip || r.equipment_name === PFILTER.equip)
           && (!PFILTER.resp || r.responsible_id === PFILTER.resp) && (!PFILTER.over || (r.days_left != null && r.days_left < 0))
           && (!q || [r.project, r.observations, r.expected_date, r.equipment_name, r.responsible_name].some(v => String(v || '').toLowerCase().includes(q))));
+        shown = list;
         body.innerHTML = list.map(tr).join('') || `<tr><td colspan="8" class="center muted">${rows.length ? 'Ningún proyecto coincide con los filtros.' : 'Todavía no hay proyectos. Pulsa «Nuevo proyecto».'}</td></tr>`;
         g('pf-count').textContent = rows.length ? `${list.length} de ${rows.length} proyectos. Pulsa una fila para editarla o eliminarla.` : 'Pulsa una fila para editarla o eliminarla.';
       };
       ['pf-q', 'pf-status', 'pf-equip', 'pf-resp', 'pf-over'].forEach(id => { g(id).oninput = paint; g(id).onchange = paint; });
       g('pf-clear').onclick = () => { g('pf-q').value = ''; g('pf-status').value = ''; g('pf-equip').value = ''; g('pf-resp').value = ''; g('pf-over').checked = false; paint(); };
+      g('pf-xlsx').onclick = e => guard(async () => { const day = new Date().toISOString().slice(0, 10);
+        await saveTable('xlsx', 'prevencion_' + day, { Prevención: [['Proyecto', 'Estado', 'Prioridad', 'Máquina', 'Responsable', 'Fecha límite', 'Fecha prevista', 'Material', 'Observaciones', 'Plazo (días)'],
+          ...shown.map(r => [r.project, r.status, PRIO[r.priority] || '', r.equipment_name || '', r.responsible_name || '', fmtPrevDay(r.deadline), r.expected_date || '', PMAT[r.material_status] || '', r.observations || '', r.days_left ?? ''])] }); }, e.currentTarget);
+      g('pf-pdf').onclick = () => { const t = document.title; document.title = 'Prevención ' + new Date().toISOString().slice(0, 10); window.onafterprint = () => { document.title = t; window.onafterprint = null; }; print(); };
       paint();
     } };
 }

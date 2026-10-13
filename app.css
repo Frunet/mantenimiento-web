@@ -194,3 +194,7 @@ details summary{cursor:pointer;font-weight:600}
 .modal-ic{font-size:2.2rem;line-height:1}.modal h3{margin:.4rem 0 .5rem;font-size:1.15rem;color:#a3170d}
 .modal-what{font-size:1.02rem;font-weight:600;margin:.3rem 0}.modal-why{color:#394857;margin:.5rem 0 .9rem;text-align:left;background:#f4f7fa;border-radius:10px;padding:.6rem .8rem}
 .modal-raw{text-align:left;margin:.2rem 0 .9rem;font-size:.8rem;color:var(--muted)}.modal-raw code{display:block;white-space:pre-wrap;word-break:break-word;margin-top:.3rem}
+
+.kpi.kpi-red{border-top-color:#c9302c}.kpi.kpi-amber{border-top-color:#e0a100}
+@media print{.prev-print{page:prev}.pfilter,#pf-count{display:none}.tprev{min-width:0;font-size:.75rem}.tablewrap{overflow:visible}}
+@page prev{size:landscape;margin:10mm}
